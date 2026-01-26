@@ -1,12 +1,15 @@
 #!/bin/bash
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 
-# GPS Photo Renamer - UI Version v2.4.0
+# GPS Photo Renamer - UI Version v1.0.0
 # Renames photos based on GPS EXIF data with native macOS dialogs
 # v2.1.0: Video detection and deletion option
 # v2.2.0: Map tile watermark from OpenStreetMap
 # v2.3.0: Map option dialog, reprocess existing photos, _MAP tag, bigger map
 # v2.4.0: Custom map settings (size, transparency, zoom)
+# v2.4.1: Fixed reprocess-map mode, improved location extraction
+# v2.5.0: Forward geocoding for reprocess (when EXIF GPS lost), preserve EXIF on save
+# v2.5.1: Fix EXIF orientation issue (images rotated twice) using piexif
 
 # Funktion für Benachrichtigungen
 notify() {
@@ -27,7 +30,7 @@ show_error() {
 LOG_FILE="$HOME/Desktop/gps_photo_renamer.log"
 exec > "$LOG_FILE" 2>&1
 
-echo "=== GPS Photo Renamer v2.4.0 ==="
+echo "=== GPS Photo Renamer v2.5.1 ==="
 echo "$(date)"
 echo ""
 
@@ -62,6 +65,16 @@ if ! python3 -c "import requests" 2>/dev/null; then
     fi
 fi
 
+# Prüfe piexif (für EXIF-Orientierung)
+if ! python3 -c "import piexif" 2>/dev/null; then
+    notify "Installation" "Installiere piexif..."
+
+    if ! pip3 install piexif --break-system-packages 2>&1; then
+        echo "⚠️ piexif Installation fehlgeschlagen (optional)"
+        # Nicht kritisch - App funktioniert auch ohne
+    fi
+fi
+
 if [ $INSTALL_FAILED -eq 1 ]; then
     osascript <<'HELP_DIALOG'
 display dialog "⚠️ Installation fehlgeschlagen!
@@ -72,7 +85,7 @@ display dialog "⚠️ Installation fehlgeschlagen!
    brew install python3
 
 2️⃣ Python-Pakete installieren:
-   pip3 install Pillow requests --break-system-packages
+   pip3 install Pillow requests piexif --break-system-packages
 
 📄 Details im Log: ~/Desktop/gps_photo_renamer.log
 
@@ -153,20 +166,20 @@ rechts oben auf dem Foto angezeigt." buttons {"Nein", "Ja"} default button 2 wit
         -- Standard oder Benutzerdefiniert?
         set mapSettingsChoice to button returned of (display dialog "⚙️ Karten-Einstellungen
 
-Standard: 280×280px, 70% sichtbar, Stadtteil-Zoom
+Standard: 15% vom Bild, 70% sichtbar, Stadtteil-Zoom
 Benutzerdefiniert: Größe, Transparenz und Zoom selbst wählen" buttons {"Standard", "Benutzerdefiniert"} default button 1 with title "GPS Photo Renamer - Karten-Einstellungen")
 
         if mapSettingsChoice is "Benutzerdefiniert" then
             -- Größe wählen
             set mapSizeChoice to button returned of (display dialog "📐 Kartengröße wählen
 
-Klein: 180×180 Pixel
+Klein: 10% vom Bild
 → Dezent, wenig Platz
 
-Mittel: 280×280 Pixel
+Mittel: 15% vom Bild
 → Gut sichtbar, Standard
 
-Groß: 380×380 Pixel
+Groß: 20% vom Bild
 → Sehr prominent, mehr Details" buttons {"Klein", "Mittel", "Groß"} default button 2 with title "GPS Photo Renamer - Kartengröße")
 
             -- Transparenz wählen
@@ -253,42 +266,45 @@ fi
 if [[ "$MAP_OPTION" == "Ja" ]]; then
     PYTHON_ARGS="$PYTHON_ARGS --map"
 
-    # Map Size
+    # Map Size (in Prozent vom Bild) - Standard = 15%
     case "$MAP_SIZE" in
         "Klein")
-            PYTHON_ARGS="$PYTHON_ARGS --map-size 180"
-            ;;
-        "Mittel")
-            PYTHON_ARGS="$PYTHON_ARGS --map-size 280"
+            PYTHON_ARGS="$PYTHON_ARGS --map-size 10"
             ;;
         "Groß")
-            PYTHON_ARGS="$PYTHON_ARGS --map-size 380"
+            PYTHON_ARGS="$PYTHON_ARGS --map-size 20"
+            ;;
+        *)
+            # Standard/Mittel oder leer = 15%
+            PYTHON_ARGS="$PYTHON_ARGS --map-size 15"
             ;;
     esac
 
-    # Map Transparency (als Prozent sichtbar)
+    # Map Transparency - Standard = 70%
     case "$MAP_TRANSPARENCY" in
         "Dezent")
             PYTHON_ARGS="$PYTHON_ARGS --map-opacity 50"
             ;;
-        "Normal")
-            PYTHON_ARGS="$PYTHON_ARGS --map-opacity 70"
-            ;;
         "Kräftig")
             PYTHON_ARGS="$PYTHON_ARGS --map-opacity 90"
             ;;
+        *)
+            # Standard/Normal oder leer = 70%
+            PYTHON_ARGS="$PYTHON_ARGS --map-opacity 70"
+            ;;
     esac
 
-    # Map Zoom
+    # Map Zoom - Standard = 13 (Stadtteil)
     case "$MAP_ZOOM" in
         "Straße")
             PYTHON_ARGS="$PYTHON_ARGS --map-zoom 15"
             ;;
-        "Stadtteil")
-            PYTHON_ARGS="$PYTHON_ARGS --map-zoom 13"
-            ;;
         "Region")
             PYTHON_ARGS="$PYTHON_ARGS --map-zoom 11"
+            ;;
+        *)
+            # Standard/Stadtteil oder leer = 13
+            PYTHON_ARGS="$PYTHON_ARGS --map-zoom 13"
             ;;
     esac
 fi

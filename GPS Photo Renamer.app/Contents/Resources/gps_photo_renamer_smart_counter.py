@@ -93,6 +93,40 @@ class GPSPhotoRenamer:
         except KeyError:
             return None
     
+    def forward_geocode(self, city: str, country_code: str) -> Optional[Dict[str, float]]:
+        """
+        Forward geocode: Convert city name + country to coordinates.
+        Used for reprocessing photos that lost their EXIF GPS data.
+        """
+        cache_key = f"fwd:{city}:{country_code}"
+        if cache_key in self.geocode_cache:
+            return self.geocode_cache[cache_key]
+
+        try:
+            url = "https://nominatim.openstreetmap.org/search"
+            params = {
+                'q': f"{city}, {country_code}",
+                'format': 'json',
+                'limit': 1
+            }
+            headers = {'User-Agent': 'GPSPhotoRenamer/2.4'}
+
+            response = requests.get(url, params=params, headers=headers, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                if data and len(data) > 0:
+                    result = {
+                        'latitude': float(data[0]['lat']),
+                        'longitude': float(data[0]['lon'])
+                    }
+                    self.geocode_cache[cache_key] = result
+                    print(f"    📍 Forward geocoded {city}, {country_code} → {result['latitude']:.4f}, {result['longitude']:.4f}")
+                    return result
+        except Exception as e:
+            print(f"  ⚠️  Forward geocoding failed: {e}")
+
+        return None
+
     def geocode_location(self, lat: float, lon: float) -> Optional[Dict[str, str]]:
         """
         Reverse geocode coordinates to location name.
@@ -128,8 +162,10 @@ class GPSPhotoRenamer:
             return result
         
         # If all services fail, return coordinates
+        coord_str = f"{lat:.5f}"
         return {
-            'city': f"{lat:.5f}",
+            'city': coord_str,
+            'city_display': coord_str,
             'country_code': f"{lon:.5f}"
         }
     
@@ -150,22 +186,23 @@ class GPSPhotoRenamer:
                 data = response.json()
                 address = data.get('address', {})
                 
-                city = (address.get('city') or 
-                       address.get('town') or 
+                city = (address.get('city') or
+                       address.get('town') or
                        address.get('village') or
                        address.get('municipality') or
                        address.get('county', 'Unknown'))
-                
+
                 country_code = address.get('country_code', 'XX').upper()
-                
+
                 return {
-                    'city': self._clean_location_name(city),
+                    'city': self._clean_location_name_for_filename(city),
+                    'city_display': self._clean_location_name_for_display(city),
                     'country_code': country_code
                 }
         except Exception as e:
             print(f"  ⚠️  Nominatim error: {e}")
         return None
-    
+
     def _try_locationiq(self, lat: float, lon: float) -> Optional[Dict[str, str]]:
         """Try LocationIQ for reverse geocoding."""
         try:
@@ -182,21 +219,22 @@ class GPSPhotoRenamer:
                 data = response.json()
                 address = data.get('address', {})
                 
-                city = (address.get('city') or 
-                       address.get('town') or 
+                city = (address.get('city') or
+                       address.get('town') or
                        address.get('village') or
                        address.get('county', 'Unknown'))
-                
+
                 country_code = address.get('country_code', 'XX').upper()
-                
+
                 return {
-                    'city': self._clean_location_name(city),
+                    'city': self._clean_location_name_for_filename(city),
+                    'city_display': self._clean_location_name_for_display(city),
                     'country_code': country_code
                 }
         except Exception as e:
             print(f"  ⚠️  LocationIQ error: {e}")
         return None
-    
+
     def _try_bigdatacloud(self, lat: float, lon: float) -> Optional[Dict[str, str]]:
         """Try BigDataCloud for reverse geocoding (free, no API key)."""
         try:
@@ -211,26 +249,33 @@ class GPSPhotoRenamer:
             if response.status_code == 200:
                 data = response.json()
                 
-                city = (data.get('city') or 
-                       data.get('locality') or 
+                city = (data.get('city') or
+                       data.get('locality') or
                        data.get('principalSubdivision', 'Unknown'))
-                
+
                 country_code = data.get('countryCode', 'XX')
-                
+
                 return {
-                    'city': self._clean_location_name(city),
+                    'city': self._clean_location_name_for_filename(city),
+                    'city_display': self._clean_location_name_for_display(city),
                     'country_code': country_code
                 }
         except Exception as e:
             print(f"  ⚠️  BigDataCloud error: {e}")
         return None
     
-    def _clean_location_name(self, name: str) -> str:
-        """Clean location name for use in filename."""
+    def _clean_location_name_for_filename(self, name: str) -> str:
+        """Clean location name for use in filename (no spaces)."""
         # Remove special characters but keep umlauts
         name = re.sub(r'[<>:"/\\|?*]', '', name)
-        # Replace spaces with nothing or underscore
+        # Replace spaces with nothing for filenames
         name = name.replace(' ', '')
+        return name
+
+    def _clean_location_name_for_display(self, name: str) -> str:
+        """Clean location name for display (keep spaces)."""
+        # Remove only truly problematic characters, keep spaces
+        name = re.sub(r'[<>:"/\\|?*]', '', name)
         return name
 
     def get_map_tile(self, lat: float, lon: float, size: int = 200, zoom: int = 13) -> Optional[Image.Image]:
@@ -250,18 +295,24 @@ class GPSPhotoRenamer:
             import math
             from io import BytesIO
 
-            # Convert lat/lon to tile numbers
+            # Convert lat/lon to PRECISE pixel position in world coordinates
             n = 2 ** zoom
-            x_tile = int((lon + 180) / 360 * n)
-            y_tile = int((1 - math.asinh(math.tan(math.radians(lat))) / math.pi) / 2 * n)
 
-            # Calculate pixel position within tile (tiles are 256x256)
-            x_pixel = int(((lon + 180) / 360 * n - x_tile) * 256)
-            y_pixel = int(((1 - math.asinh(math.tan(math.radians(lat))) / math.pi) / 2 * n - y_tile) * 256)
+            # Precise floating-point tile coordinates
+            x_tile_float = (lon + 180) / 360 * n
+            y_tile_float = (1 - math.asinh(math.tan(math.radians(lat))) / math.pi) / 2 * n
+
+            # Integer tile numbers
+            x_tile = int(x_tile_float)
+            y_tile = int(y_tile_float)
+
+            # Precise pixel position within the tile grid (sub-pixel accuracy)
+            x_pixel_precise = (x_tile_float - x_tile) * 256
+            y_pixel_precise = (y_tile_float - y_tile) * 256
 
             # We need to fetch multiple tiles to get a centered view
-            # Calculate how many tiles we need (at least 2x2 for proper centering)
-            tiles_needed = 2
+            # Use 3x3 for better centering precision
+            tiles_needed = 3
 
             # Create a larger canvas to stitch tiles
             canvas_size = 256 * tiles_needed
@@ -269,13 +320,16 @@ class GPSPhotoRenamer:
 
             # Fetch tiles in a grid around the center tile
             headers = {
-                'User-Agent': 'GPSPhotoRenamer/2.1 (photo organization tool)'
+                'User-Agent': 'GPSPhotoRenamer/2.5 (photo organization tool)'
             }
+
+            # Calculate starting tile offset (center the target tile)
+            start_offset = tiles_needed // 2
 
             for dx in range(tiles_needed):
                 for dy in range(tiles_needed):
-                    tile_x = x_tile + dx - tiles_needed // 2 + 1
-                    tile_y = y_tile + dy - tiles_needed // 2 + 1
+                    tile_x = x_tile + dx - start_offset
+                    tile_y = y_tile + dy - start_offset
 
                     # OpenStreetMap tile URL
                     url = f"https://tile.openstreetmap.org/{zoom}/{tile_x}/{tile_y}.png"
@@ -289,31 +343,80 @@ class GPSPhotoRenamer:
                         # If tile fetch fails, leave it blank
                         pass
 
-            # Calculate crop box to center on the exact location
-            center_x = x_pixel + 256 * (tiles_needed // 2 - 1) + 128
-            center_y = y_pixel + 256 * (tiles_needed // 2 - 1) + 128
+            # Calculate the PRECISE position of coordinates on the canvas
+            # The target tile is at position (start_offset * 256, start_offset * 256)
+            # Add the sub-tile pixel offset
+            exact_x = start_offset * 256 + x_pixel_precise
+            exact_y = start_offset * 256 + y_pixel_precise
 
-            left = max(0, center_x - size // 2)
-            top = max(0, center_y - size // 2)
-            right = min(canvas_size, left + size)
-            bottom = min(canvas_size, top + size)
+            # Calculate crop box centered on the EXACT coordinate position
+            left = int(exact_x - size / 2)
+            top = int(exact_y - size / 2)
+
+            # Ensure we don't go outside canvas bounds
+            if left < 0:
+                left = 0
+            if top < 0:
+                top = 0
+            if left + size > canvas_size:
+                left = canvas_size - size
+            if top + size > canvas_size:
+                top = canvas_size - size
+
+            right = left + size
+            bottom = top + size
 
             # Crop to desired size
             map_img = canvas.crop((left, top, right, bottom))
 
-            # Ensure exact size
-            if map_img.size != (size, size):
+            # WICHTIG: Sicherstellen dass die Karte EXAKT die gewünschte Grösse hat
+            actual_width, actual_height = map_img.size
+            if actual_width != size or actual_height != size:
                 map_img = map_img.resize((size, size), Image.Resampling.LANCZOS)
 
-            # Add a small red dot at center to mark exact location
+            # Pin ist IMMER in der Mitte, da die Karte auf die Koordinaten zentriert wird
             from PIL import ImageDraw as MapDraw
             draw = MapDraw.Draw(map_img)
-            dot_radius = 4
-            center = size // 2
+
+            # Pin-Position = Kartenmitte
+            pin_x = size // 2
+            pin_y = size // 2
+
+            # Grösserer, klassischer Map-Pin
+            pin_radius = 10  # Kreis-Radius
+
+            # Schatten
+            shadow_offset = 3
             draw.ellipse(
-                [center - dot_radius, center - dot_radius,
-                 center + dot_radius, center + dot_radius],
-                fill=(255, 0, 0),
+                [pin_x - pin_radius + shadow_offset, pin_y - pin_radius * 2 + shadow_offset,
+                 pin_x + pin_radius + shadow_offset, pin_y + shadow_offset],
+                fill=(0, 0, 0, 100)
+            )
+
+            # Roter Pin-Körper (Tropfenform nach oben)
+            draw.ellipse(
+                [pin_x - pin_radius, pin_y - pin_radius * 2,
+                 pin_x + pin_radius, pin_y],
+                fill=(220, 50, 50),
+                outline=(255, 255, 255),
+                width=2
+            )
+
+            # Weisser Punkt in der Mitte des Kreises
+            dot_radius = 4
+            dot_center_y = pin_y - pin_radius
+            draw.ellipse(
+                [pin_x - dot_radius, dot_center_y - dot_radius,
+                 pin_x + dot_radius, dot_center_y + dot_radius],
+                fill=(255, 255, 255)
+            )
+
+            # Spitze nach unten (zeigt auf die exakte Position)
+            draw.polygon(
+                [(pin_x, pin_y + 6),      # Spitze unten
+                 (pin_x - 6, pin_y - 2),  # Links
+                 (pin_x + 6, pin_y - 2)], # Rechts
+                fill=(220, 50, 50),
                 outline=(255, 255, 255)
             )
 
@@ -365,7 +468,7 @@ class GPSPhotoRenamer:
             gps_coords: Dictionary with 'latitude' and 'longitude' keys for map
             add_map: If True, add map tile (default True)
             map_only: If True, only add map (for reprocessing existing photos)
-            map_size: Size of map in pixels (default: 280)
+            map_size: Size of map in percent of image (default: 15 = 15%)
             map_opacity: Opacity of map in percent (default: 70)
             map_zoom: Zoom level for map (default: 13)
 
@@ -375,6 +478,31 @@ class GPSPhotoRenamer:
         try:
             # Open image
             img = Image.open(image_path)
+
+            # WICHTIG: EXIF-Daten speichern bevor wir das Bild bearbeiten
+            original_exif = None
+            modified_exif = None
+            try:
+                original_exif = img.info.get('exif')
+
+                # Versuche piexif zu verwenden um Orientierung zu korrigieren
+                if original_exif:
+                    try:
+                        import piexif
+                        exif_dict = piexif.load(original_exif)
+                        # Setze Orientierung auf 1 (Normal) da wir das Bild drehen
+                        if piexif.ImageIFD.Orientation in exif_dict.get("0th", {}):
+                            exif_dict["0th"][piexif.ImageIFD.Orientation] = 1
+                        modified_exif = piexif.dump(exif_dict)
+                    except ImportError:
+                        # piexif nicht installiert - EXIF nicht speichern um Doppeldrehung zu vermeiden
+                        print(f"  ℹ️  piexif not installed - EXIF orientation may cause issues")
+                        modified_exif = None
+                    except Exception as e:
+                        # Bei Fehler EXIF nicht speichern
+                        modified_exif = None
+            except Exception:
+                pass
 
             # WICHTIG: EXIF-Orientierung auslesen und Bild korrekt drehen
             try:
@@ -442,7 +570,9 @@ class GPSPhotoRenamer:
 
                 # RIGHT WATERMARK: City - Country (only if GPS exists)
                 if location and location.get('city'):
-                    right_text = f"{location['city']} - {location['country_code']}"
+                    # Verwende city_display für Anzeige (mit Leerzeichen), fallback auf city
+                    display_city = location.get('city_display', location['city'])
+                    right_text = f"{display_city} - {location['country_code']}"
 
                     # Get text bounding box
                     bbox = draw.textbbox((0, 0), right_text, font=font)
@@ -466,11 +596,18 @@ class GPSPhotoRenamer:
             # Composite text overlay first
             img = Image.alpha_composite(img, overlay)
 
-            # MAP TILE: Below the location text, aligned with right edge of text
+            # MAP TILE: Below the location text, aligned to right edge
             if add_map and gps_coords and gps_coords.get('latitude') and gps_coords.get('longitude'):
                 try:
-                    # Use provided map_size (user-configurable)
-                    actual_map_size = map_size
+                    # Kartengrösse PROZENTUAL (map_size als Prozent der kleinsten Dimension)
+                    # KEIN Maximum - immer proportional zum Bild
+                    actual_map_size = int(min_dimension * map_size / 100)
+
+                    # Nur Minimum für Lesbarkeit
+                    actual_map_size = max(100, actual_map_size)
+
+                    # DEBUG: Zeige berechnete Werte
+                    print(f"    [MAP] min_dimension={min_dimension}, map_size={map_size}%, actual={actual_map_size}px, zoom={map_zoom}")
 
                     # Fetch map tile with user-configurable zoom
                     map_img = self.get_map_tile(
@@ -494,35 +631,35 @@ class GPSPhotoRenamer:
                         map_rgba.paste(map_img, (0, 0))
                         map_rgba.putalpha(alpha)
 
-                        # Add border effect
-                        border_size = 3
+                        # Dünner schwarzer Rand
+                        map_padding = max(3, padding // 6)
 
-                        # Create border overlay on main image
-                        border_overlay = Image.new('RGBA', img.size, (0, 0, 0, 0))
-                        border_draw = ImageDraw.Draw(border_overlay)
+                        # Create background overlay on main image
+                        bg_overlay = Image.new('RGBA', img.size, (0, 0, 0, 0))
+                        bg_draw = ImageDraw.Draw(bg_overlay)
 
-                        # Position: RIGHT EDGE aligned with location text
-                        # Map right edge should be at same position as text right edge
-                        if right_text_width > 0:
-                            # Align map right edge with text right edge
-                            text_right_edge = right_x + right_text_width + padding//2
-                            map_x = text_right_edge - actual_map_size - border_size
+                        # Position: BÜNDIG mit dem Text-Hintergrund (gleicher rechter Rand)
+                        text_right_edge = img.size[0] - padding - padding // 2
+                        map_x = text_right_edge - actual_map_size - map_padding
+
+                        # Vertical position: DIREKT unter dem Text (minimaler Abstand)
+                        # Text-Box endet bei: y + text_height + padding//2 = padding + text_height + padding//2
+                        if right_text_height > 0:
+                            text_box_bottom = padding + right_text_height + padding // 2
                         else:
-                            # No text, align to right edge of image
-                            map_x = img.size[0] - actual_map_size - padding - border_size
+                            text_box_bottom = padding + font_size + padding // 2
+                        # Minimaler Abstand: nur map_padding
+                        map_y = text_box_bottom + map_padding
 
-                        # Vertical position: below text with small gap
-                        map_y = padding + right_text_height + padding if right_text_height > 0 else padding
-
-                        # Draw white border rectangle
-                        border_draw.rectangle(
-                            [map_x - border_size, map_y - border_size,
-                             map_x + actual_map_size + border_size, map_y + actual_map_size + border_size],
-                            fill=(255, 255, 255, 200)
+                        # Draw black background rectangle
+                        bg_draw.rectangle(
+                            [map_x - map_padding, map_y - map_padding,
+                             map_x + actual_map_size + map_padding, map_y + actual_map_size + map_padding],
+                            fill=(0, 0, 0, 180)
                         )
 
-                        # Composite border
-                        img = Image.alpha_composite(img, border_overlay)
+                        # Composite background
+                        img = Image.alpha_composite(img, bg_overlay)
 
                         # Paste the semi-transparent map
                         img.paste(map_rgba, (map_x, map_y), map_rgba)
@@ -534,7 +671,18 @@ class GPSPhotoRenamer:
 
             # Convert back to RGB and save
             img = img.convert('RGB')
-            img.save(image_path, quality=95)
+
+            # Save with corrected EXIF data (orientation = 1) if available
+            # WICHTIG: Wir verwenden modified_exif wo Orientierung auf 1 gesetzt ist,
+            # da das Bild bereits mit exif_transpose() gedreht wurde.
+            # Wenn wir original_exif verwenden würden, würde der Viewer das Bild nochmal drehen!
+            if modified_exif:
+                img.save(image_path, quality=95, exif=modified_exif)
+                print(f"  ✓ Saved with EXIF (orientation corrected)")
+            else:
+                # Ohne EXIF speichern - sicherer als mit falscher Orientierung
+                img.save(image_path, quality=95)
+                print(f"  ✓ Saved without EXIF (to avoid orientation issues)")
 
             return True
 
@@ -687,7 +835,7 @@ class GPSPhotoRenamer:
             dry_run: If True, only show what would be renamed
             add_watermark: If True, add watermark to images
             add_map: If True, add map tile to images
-            map_size: Size of map in pixels (default: 280)
+            map_size: Size of map in percent of image (default: 15 = 15%)
             map_opacity: Opacity of map in percent (default: 70)
             map_zoom: Zoom level for map (default: 13)
             reprocess_map: If True, add map to already processed files without _MAP tag
@@ -737,42 +885,71 @@ class GPSPhotoRenamer:
             is_processed = self.is_already_processed(photo_path.name)
             has_map = self.has_map_tag(photo_path.name)
 
+            # Debug output for reprocess mode
+            if reprocess_map:
+                print(f"    [DEBUG] is_processed={is_processed}, has_map={has_map}, add_map={add_map}")
+
             # Handle reprocess_map mode: Add map to already processed files without _MAP
             if is_processed and reprocess_map and add_map and not has_map:
                 print(f"  🗺️  Adding map to existing file...")
 
-                # Extract EXIF to get GPS
+                # Extract datetime from filename (first 14 digits)
+                match = re.match(r'^(\d{12,14})', photo_path.name)
+                datetime_str = match.group(1) if match else None
+
+                # Extract location from filename - more flexible pattern
+                # Handles: 20241226093045_0001_Graz_AT.jpg
+                #          20241226093045_0001_NewYork_US.jpg
+                #          20241226093045_0001_San-Francisco_US.jpg
+                #          20241226093045_0001_Dübendorf_CH_MAP.jpg
+                location = None
+                # Pattern: after the counter (4 digits), get everything until the country code (2 uppercase letters)
+                # The country code must be followed by either _MAP, .jpg, .jpeg, .png, .heic, etc.
+                loc_match = re.search(r'_\d{4}_(.+)_([A-Z]{2})(?:_MAP)?\.', photo_path.name, re.IGNORECASE)
+                if loc_match:
+                    location = {'city': loc_match.group(1), 'country_code': loc_match.group(2)}
+                    print(f"    📍 Extracted location: {location['city']}, {location['country_code']}")
+
+                # Try to get GPS from EXIF first
                 exif = self.get_exif_data(photo_path)
                 gps_data = self.get_gps_data(exif) if exif else None
 
-                if gps_data and not dry_run:
-                    # Extract datetime from filename (first 14 digits)
-                    match = re.match(r'^(\d{12,14})', photo_path.name)
-                    datetime_str = match.group(1) if match else None
+                # If no GPS in EXIF but we have location from filename, use forward geocoding
+                if not gps_data and location:
+                    print(f"    ℹ️  No GPS in EXIF, trying forward geocoding from filename...")
+                    gps_data = self.forward_geocode(location['city'], location['country_code'])
+                    if gps_data:
+                        time.sleep(1)  # Rate limiting for Nominatim
 
-                    # Extract location from filename
-                    location = None
-                    # Pattern: ..._City_CC.ext or ..._City_CC_MAP.ext
-                    loc_match = re.search(r'_(\d{4})_([^_]+)_([A-Z]{2})(?:_MAP)?\.', photo_path.name)
-                    if loc_match:
-                        location = {'city': loc_match.group(2), 'country_code': loc_match.group(3)}
+                if not gps_data:
+                    if not location:
+                        print(f"  ⚠️  No GPS in EXIF and no location in filename - cannot add map")
+                    else:
+                        print(f"  ⚠️  Forward geocoding failed for {location['city']}, {location['country_code']}")
+                    skipped_count += 1
+                    continue
 
-                    # Add map watermark with user settings
-                    success = self.add_watermark_to_image(
-                        photo_path, datetime_str, location, gps_data,
-                        map_only=True, map_size=map_size, map_opacity=map_opacity, map_zoom=map_zoom
-                    )
+                if dry_run:
+                    print(f"  [DRY-RUN] Would add map to: {photo_path.name}")
+                    map_added_count += 1
+                    continue
 
-                    if success:
-                        # Rename file to add _MAP tag
-                        stem = photo_path.stem
-                        new_name = f"{stem}_MAP{photo_path.suffix}"
-                        new_path = photo_path.parent / new_name
-                        photo_path.rename(new_path)
-                        print(f"    → {new_name}")
-                        map_added_count += 1
-                elif not gps_data:
-                    print(f"  ⚠️  No GPS data - cannot add map")
+                # Add map watermark with user settings
+                success = self.add_watermark_to_image(
+                    photo_path, datetime_str, location, gps_data,
+                    map_only=True, map_size=map_size, map_opacity=map_opacity, map_zoom=map_zoom
+                )
+
+                if success:
+                    # Rename file to add _MAP tag
+                    stem = photo_path.stem
+                    new_name = f"{stem}_MAP{photo_path.suffix}"
+                    new_path = photo_path.parent / new_name
+                    photo_path.rename(new_path)
+                    print(f"    ✓ {new_name}")
+                    map_added_count += 1
+                else:
+                    print(f"  ❌ Failed to add map")
                     skipped_count += 1
                 continue
 
@@ -892,8 +1069,8 @@ def main():
                        help='Add watermark with date/time and location')
     parser.add_argument('--map', action='store_true',
                        help='Add map tile watermark with GPS location')
-    parser.add_argument('--map-size', type=int, default=280,
-                       help='Map size in pixels (default: 280)')
+    parser.add_argument('--map-size', type=int, default=15,
+                       help='Map size in percent of image (default: 15 = 15%%)')
     parser.add_argument('--map-opacity', type=int, default=70,
                        help='Map opacity in percent (default: 70)')
     parser.add_argument('--map-zoom', type=int, default=13,
