@@ -28,8 +28,7 @@ Nachher: 20241226093045_0001_Graz_AT.jpg
 1. **[📥 Download GPS Photo Renamer (Latest)](https://github.com/Stebibastian/gps-photo-renamer/releases/latest)**
 2. ZIP-Datei entpacken
 3. `GPS Photo Renamer.app` in den Programme-Ordner verschieben
-4. **Wichtig:** `gps_photo_renamer_smart_counter.py` im gleichen Ordner lassen!
-5. Doppelklick zum Starten
+4. Doppelklick zum Starten
 
 **Erster Start - Sicherheitswarnung:**
 
@@ -39,14 +38,6 @@ macOS blockiert die App beim ersten Mal:
 - Klicke **"Dennoch öffnen"** → **"Öffnen"** bestätigen
 
 ✅ Danach startet die App normal!
-
-### Mit Git
-
-```bash
-git clone https://github.com/Stebibastian/gps-photo-renamer.git
-cd gps-photo-renamer
-open "GPS Photo Renamer.app"
-```
 
 ## Verwendung
 

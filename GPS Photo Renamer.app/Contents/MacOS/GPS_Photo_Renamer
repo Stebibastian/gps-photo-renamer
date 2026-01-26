@@ -221,17 +221,12 @@ fi
 # Schritt 5: Verarbeitung starten
 notify "Verarbeitung läuft" "Fotos werden umbenannt..."
 
-# Finde das Python-Script (relativ zum App-Bundle)
-SCRIPT_DIR="$(cd "$(dirname "$0")/../../../" && pwd)"
+# Python-Script ist im Resources-Ordner der App eingebettet
+SCRIPT_DIR="$(dirname "$0")/../Resources"
 PYTHON_SCRIPT="$SCRIPT_DIR/gps_photo_renamer_smart_counter.py"
 
-# Fallback: Neben der App
 if [ ! -f "$PYTHON_SCRIPT" ]; then
-    PYTHON_SCRIPT="$(dirname "$(dirname "$(dirname "$(dirname "$0")")")")/gps_photo_renamer_smart_counter.py"
-fi
-
-if [ ! -f "$PYTHON_SCRIPT" ]; then
-    show_error "Python-Script nicht gefunden!\n\n$PYTHON_SCRIPT"
+    show_error "Python-Script nicht gefunden!\n\nDie App scheint beschädigt zu sein."
     exit 1
 fi
 
