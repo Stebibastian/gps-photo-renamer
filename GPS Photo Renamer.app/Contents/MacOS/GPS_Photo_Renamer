@@ -1,10 +1,11 @@
 #!/bin/bash
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 
-# GPS Photo Renamer - UI Version v2.2.0
+# GPS Photo Renamer - UI Version v2.3.0
 # Renames photos based on GPS EXIF data with native macOS dialogs
 # v2.1.0: Video detection and deletion option
 # v2.2.0: Map tile watermark from OpenStreetMap
+# v2.3.0: Map option dialog, reprocess existing photos, _MAP tag, bigger map
 
 # Funktion für Benachrichtigungen
 notify() {
@@ -25,7 +26,7 @@ show_error() {
 LOG_FILE="$HOME/Desktop/gps_photo_renamer.log"
 exec > "$LOG_FILE" 2>&1
 
-echo "=== GPS Photo Renamer v2.2.0 ==="
+echo "=== GPS Photo Renamer v2.3.0 ==="
 echo "$(date)"
 echo ""
 
@@ -135,12 +136,26 @@ Du siehst zuerst, was passieren würde.
 
 Nach dem Log kannst du direkt umbenennen." buttons {"Nein, direkt umbenennen", "Ja, erst Log anzeigen"} default button 2 with title "GPS Photo Renamer - Modus")
 
+    -- Karten-Option
+    set mapChoice to button returned of (display dialog "🗺️ Kartenausschnitt hinzufügen?
+
+Ein kleiner OpenStreetMap-Ausschnitt wird
+rechts oben auf dem Foto angezeigt." buttons {"Nein", "Ja"} default button 2 with title "GPS Photo Renamer - Karte")
+
+    -- Wenn Karte gewünscht: Frage nach bereits bearbeiteten Fotos
+    set reprocessMapChoice to "Nein"
+    if mapChoice is "Ja" then
+        set reprocessMapChoice to button returned of (display dialog "🔄 Bereits bearbeitete Fotos nochmal mit Karte versehen?
+
+Fotos die schon umbenannt wurden (aber noch keine Karte haben) können nachträglich eine Karte bekommen." buttons {"Nein, nur neue", "Ja, alle mit Karte"} default button 1 with title "GPS Photo Renamer - Karte nachträglich")
+    end if
+
     -- Wasserzeichen und Geocoding immer aktiv, Unterordner nie
     set watermarkChoice to "Ja"
     set geocodingChoice to "Ja"
     set recursiveChoice to "Nein"
 
-    return watermarkChoice & "|" & geocodingChoice & "|" & recursiveChoice & "|" & dryrunChoice
+    return watermarkChoice & "|" & geocodingChoice & "|" & recursiveChoice & "|" & dryrunChoice & "|" & mapChoice & "|" & reprocessMapChoice
 
 on error
     return "ABGEBROCHEN"
@@ -155,12 +170,14 @@ if [[ "$options_result" == "ABGEBROCHEN" ]] || [[ -z "$options_result" ]]; then
 fi
 
 # Parse Optionen
-IFS='|' read -r WATERMARK GEOCODING RECURSIVE DRYRUN <<< "$options_result"
+IFS='|' read -r WATERMARK GEOCODING RECURSIVE DRYRUN MAP_OPTION REPROCESS_MAP <<< "$options_result"
 
 echo "Watermark: $WATERMARK"
 echo "Geocoding: $GEOCODING"
 echo "Recursive: $RECURSIVE"
 echo "Dry-Run: $DRYRUN"
+echo "Map: $MAP_OPTION"
+echo "Reprocess Map: $REPROCESS_MAP"
 
 # Baue Python-Argumente
 PYTHON_ARGS=""
@@ -175,6 +192,14 @@ fi
 
 if [[ "$RECURSIVE" == "Ja" ]]; then
     PYTHON_ARGS="$PYTHON_ARGS --recursive"
+fi
+
+if [[ "$MAP_OPTION" == "Ja" ]]; then
+    PYTHON_ARGS="$PYTHON_ARGS --map"
+fi
+
+if [[ "$REPROCESS_MAP" == "Ja, alle mit Karte" ]]; then
+    PYTHON_ARGS="$PYTHON_ARGS --reprocess-map"
 fi
 
 LOG_MODE="false"
@@ -193,6 +218,16 @@ try
     -- Immer aktiv
     set optionList to optionList & "• Wasserzeichen: Ja ✓" & return
     set optionList to optionList & "• GPS-Ortsnamen: Ja ✓" & return
+
+    -- Karten-Option
+    if "$MAP_OPTION" is "Ja" then
+        set optionList to optionList & "• Kartenausschnitt: Ja ✓" & return
+        if "$REPROCESS_MAP" is "Ja, alle mit Karte" then
+            set optionList to optionList & "• Bereits bearbeitete: Mit Karte versehen" & return
+        end if
+    else
+        set optionList to optionList & "• Kartenausschnitt: Nein" & return
+    end if
 
     if "$LOG_MODE" is "true" then
         set optionList to optionList & "• Modus: Erst Log anzeigen" & return

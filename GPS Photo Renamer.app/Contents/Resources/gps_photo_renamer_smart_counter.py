@@ -350,7 +350,8 @@ class GPSPhotoRenamer:
     
     def add_watermark_to_image(self, image_path: Path, datetime_str: Optional[str],
                                location: Optional[Dict] = None,
-                               gps_coords: Optional[Dict[str, float]] = None) -> bool:
+                               gps_coords: Optional[Dict[str, float]] = None,
+                               add_map: bool = True, map_only: bool = False) -> bool:
         """
         Add watermark to image with date/time on left, location on right,
         and optional map tile below the location text.
@@ -361,6 +362,8 @@ class GPSPhotoRenamer:
             datetime_str: Datetime string in format YYYYMMDDHHMMSS
             location: Dictionary with 'city' and 'country_code' keys
             gps_coords: Dictionary with 'latitude' and 'longitude' keys for map
+            add_map: If True, add map tile (default True)
+            map_only: If True, only add map (for reprocessing existing photos)
 
         Returns:
             True if watermark was added successfully
@@ -378,15 +381,15 @@ class GPSPhotoRenamer:
 
             # Convert to RGBA for watermark
             img = img.convert('RGBA')
-            
+
             # Create drawing overlay
             overlay = Image.new('RGBA', img.size, (0, 0, 0, 0))
             draw = ImageDraw.Draw(overlay)
-            
+
             # Calculate font size (4% of smallest dimension)
             min_dimension = min(img.size)
             font_size = int(min_dimension * 0.04)
-            
+
             # Try to load font
             try:
                 font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", font_size)
@@ -395,71 +398,75 @@ class GPSPhotoRenamer:
                     font = ImageFont.truetype("/System/Library/Fonts/Supplemental/Arial.ttf", font_size)
                 except:
                     font = ImageFont.load_default()
-            
+
             padding = int(font_size * 0.5)
-            
-            # LEFT WATERMARK: Date only (no time)
-            if datetime_str:
-                # Parse datetime string (YYYYMMDDHHMMSS) - nur Datum!
-                if len(datetime_str) >= 8:
-                    date_part = f"{datetime_str[6:8]}.{datetime_str[4:6]}.{datetime_str[0:4]}"
-                else:
-                    date_part = datetime_str[:8]
-                
-                # Single line text - nur Datum
-                left_text = date_part
-                
-                # Get text bounding box (single line)
-                bbox = draw.textbbox((0, 0), left_text, font=font)
-                text_width = bbox[2] - bbox[0]
-                text_height = bbox[3] - bbox[1]
-                
-                # Position
-                x = padding
-                y = padding
-                
-                # Background rectangle
-                draw.rectangle(
-                    [x - padding//2, y - padding//2, 
-                     x + text_width + padding//2, y + text_height + padding//2],
-                    fill=(0, 0, 0, 180)
-                )
-                
-                # Text (single line)
-                draw.text((x, y), left_text, font=font, fill=(255, 255, 255, 255))
-            
-            # RIGHT WATERMARK: City - Country (only if GPS exists)
+            right_text_width = 0
             right_text_height = 0
-            if location and location.get('city'):
-                right_text = f"{location['city']} - {location['country_code']}"
+            right_x = img.size[0] - padding  # Default right edge
 
-                # Get text bounding box
-                bbox = draw.textbbox((0, 0), right_text, font=font)
-                text_width = bbox[2] - bbox[0]
-                right_text_height = bbox[3] - bbox[1]
+            # Skip text watermarks if map_only mode
+            if not map_only:
+                # LEFT WATERMARK: Date only (no time)
+                if datetime_str:
+                    # Parse datetime string (YYYYMMDDHHMMSS) - nur Datum!
+                    if len(datetime_str) >= 8:
+                        date_part = f"{datetime_str[6:8]}.{datetime_str[4:6]}.{datetime_str[0:4]}"
+                    else:
+                        date_part = datetime_str[:8]
 
-                # Position (top right)
-                x = img.size[0] - text_width - padding * 2
-                y = padding
+                    # Single line text - nur Datum
+                    left_text = date_part
 
-                # Background rectangle
-                draw.rectangle(
-                    [x - padding//2, y - padding//2,
-                     x + text_width + padding//2, y + right_text_height + padding//2],
-                    fill=(0, 0, 0, 180)
-                )
+                    # Get text bounding box (single line)
+                    bbox = draw.textbbox((0, 0), left_text, font=font)
+                    text_width = bbox[2] - bbox[0]
+                    text_height = bbox[3] - bbox[1]
 
-                # Text
-                draw.text((x, y), right_text, font=font, fill=(255, 255, 255, 255))
+                    # Position
+                    x = padding
+                    y = padding
+
+                    # Background rectangle
+                    draw.rectangle(
+                        [x - padding//2, y - padding//2,
+                         x + text_width + padding//2, y + text_height + padding//2],
+                        fill=(0, 0, 0, 180)
+                    )
+
+                    # Text (single line)
+                    draw.text((x, y), left_text, font=font, fill=(255, 255, 255, 255))
+
+                # RIGHT WATERMARK: City - Country (only if GPS exists)
+                if location and location.get('city'):
+                    right_text = f"{location['city']} - {location['country_code']}"
+
+                    # Get text bounding box
+                    bbox = draw.textbbox((0, 0), right_text, font=font)
+                    right_text_width = bbox[2] - bbox[0]
+                    right_text_height = bbox[3] - bbox[1]
+
+                    # Position (top right)
+                    right_x = img.size[0] - right_text_width - padding * 2
+                    y = padding
+
+                    # Background rectangle
+                    draw.rectangle(
+                        [right_x - padding//2, y - padding//2,
+                         right_x + right_text_width + padding//2, y + right_text_height + padding//2],
+                        fill=(0, 0, 0, 180)
+                    )
+
+                    # Text
+                    draw.text((right_x, y), right_text, font=font, fill=(255, 255, 255, 255))
 
             # Composite text overlay first
             img = Image.alpha_composite(img, overlay)
 
-            # MAP TILE: Below the location text (only if GPS coordinates exist)
-            if gps_coords and gps_coords.get('latitude') and gps_coords.get('longitude'):
+            # MAP TILE: Below the location text, aligned with right edge of text
+            if add_map and gps_coords and gps_coords.get('latitude') and gps_coords.get('longitude'):
                 try:
-                    # Calculate map size relative to image (about 5% of smallest dimension, min 150, max 250)
-                    map_size = max(150, min(250, int(min_dimension * 0.12)))
+                    # Calculate map size - BIGGER: 15% of smallest dimension, min 200, max 350
+                    map_size = max(200, min(350, int(min_dimension * 0.18)))
 
                     # Fetch map tile
                     map_img = self.get_map_tile(
@@ -473,33 +480,40 @@ class GPSPhotoRenamer:
                         # Convert map to RGBA
                         map_img = map_img.convert('RGBA')
 
-                        # Apply 50% transparency to the map
-                        # Create alpha mask
+                        # Apply 70% opacity (less transparent than before)
                         alpha = map_img.split()[3] if map_img.mode == 'RGBA' else Image.new('L', map_img.size, 255)
-                        alpha = alpha.point(lambda p: int(p * 0.5))  # 50% transparency
+                        alpha = alpha.point(lambda p: int(p * 0.7))  # 70% opacity
 
                         # Make map semi-transparent
                         map_rgba = Image.new('RGBA', map_img.size, (0, 0, 0, 0))
                         map_rgba.paste(map_img, (0, 0))
                         map_rgba.putalpha(alpha)
 
-                        # Add rounded corner border effect
+                        # Add border effect
                         border_size = 3
-                        border_color = (255, 255, 255, 180)
 
                         # Create border overlay on main image
                         border_overlay = Image.new('RGBA', img.size, (0, 0, 0, 0))
                         border_draw = ImageDraw.Draw(border_overlay)
 
-                        # Position: top right, below the location text
-                        map_x = img.size[0] - map_size - padding
-                        map_y = padding + right_text_height + padding * 2 if right_text_height > 0 else padding
+                        # Position: RIGHT EDGE aligned with location text
+                        # Map right edge should be at same position as text right edge
+                        if right_text_width > 0:
+                            # Align map right edge with text right edge
+                            text_right_edge = right_x + right_text_width + padding//2
+                            map_x = text_right_edge - map_size - border_size
+                        else:
+                            # No text, align to right edge of image
+                            map_x = img.size[0] - map_size - padding - border_size
+
+                        # Vertical position: below text with small gap
+                        map_y = padding + right_text_height + padding if right_text_height > 0 else padding
 
                         # Draw white border rectangle
                         border_draw.rectangle(
                             [map_x - border_size, map_y - border_size,
                              map_x + map_size + border_size, map_y + map_size + border_size],
-                            fill=(255, 255, 255, 180)
+                            fill=(255, 255, 255, 200)
                         )
 
                         # Composite border
@@ -512,13 +526,13 @@ class GPSPhotoRenamer:
 
                 except Exception as e:
                     print(f"  ⚠️  Could not add map: {e}")
-            
+
             # Convert back to RGB and save
             img = img.convert('RGB')
             img.save(image_path, quality=95)
-            
+
             return True
-            
+
         except Exception as e:
             print(f"  ⚠️  Watermark error: {e}")
             return False
@@ -526,11 +540,17 @@ class GPSPhotoRenamer:
     def is_already_processed(self, filename: str) -> bool:
         """
         Check if filename matches the pattern of already processed files.
-        Pattern: YYYYMMDDHHMMSS_NNNN[_Location_CC].ext
+        Pattern: YYYYMMDDHHMMSS_NNNN[_Location_CC][_MAP].ext
         """
         # Pattern: starts with 12-14 digits, underscore, 4 digits
         pattern = r'^\d{12,14}_\d{4}'
         return bool(re.match(pattern, filename))
+
+    def has_map_tag(self, filename: str) -> bool:
+        """Check if filename already has _MAP tag."""
+        # Remove extension and check for _MAP at the end
+        name_without_ext = Path(filename).stem
+        return name_without_ext.endswith('_MAP')
     
     def _get_start_counter(self, directory: Path) -> int:
         """
@@ -649,16 +669,19 @@ class GPSPhotoRenamer:
         else:
             print(f"\n✓ No macOS system files found")
     
-    def process_directory(self, directory: Path, dry_run: bool = False, 
-                         add_watermark: bool = False, skip_processed: bool = True,
+    def process_directory(self, directory: Path, dry_run: bool = False,
+                         add_watermark: bool = False, add_map: bool = False,
+                         reprocess_map: bool = False, skip_processed: bool = True,
                          recursive: bool = False, separator: str = '_'):
         """
         Process all photos in directory.
-        
+
         Args:
             directory: Directory containing photos
             dry_run: If True, only show what would be renamed
             add_watermark: If True, add watermark to images
+            add_map: If True, add map tile to images
+            reprocess_map: If True, add map to already processed files without _MAP tag
             skip_processed: If True, skip files that match the processed pattern
             recursive: If True, process subdirectories recursively
             separator: Separator to use in filename (default: _)
@@ -670,6 +693,10 @@ class GPSPhotoRenamer:
         print(f"Geocoding:    {'Yes' if self.use_geocoding else 'No'}")
         if add_watermark:
             print(f"Watermark:    Yes (Date left, Location right)")
+        if add_map:
+            print(f"Map:          Yes (OpenStreetMap tile)")
+        if reprocess_map:
+            print(f"Reprocess:    Yes (Add map to existing photos)")
         print("="*60)
 
         # Smart counter: Find highest number
@@ -692,12 +719,53 @@ class GPSPhotoRenamer:
         
         renamed_count = 0
         skipped_count = 0
-        
+        map_added_count = 0
+
         for idx, photo_path in enumerate(photo_files, 1):
             print(f"\n[{idx}/{len(photo_files)}] Processing: {photo_path.name}")
 
             # Check if already processed
-            if skip_processed and self.is_already_processed(photo_path.name):
+            is_processed = self.is_already_processed(photo_path.name)
+            has_map = self.has_map_tag(photo_path.name)
+
+            # Handle reprocess_map mode: Add map to already processed files without _MAP
+            if is_processed and reprocess_map and add_map and not has_map:
+                print(f"  🗺️  Adding map to existing file...")
+
+                # Extract EXIF to get GPS
+                exif = self.get_exif_data(photo_path)
+                gps_data = self.get_gps_data(exif) if exif else None
+
+                if gps_data and not dry_run:
+                    # Extract datetime from filename (first 14 digits)
+                    match = re.match(r'^(\d{12,14})', photo_path.name)
+                    datetime_str = match.group(1) if match else None
+
+                    # Extract location from filename
+                    location = None
+                    # Pattern: ..._City_CC.ext or ..._City_CC_MAP.ext
+                    loc_match = re.search(r'_(\d{4})_([^_]+)_([A-Z]{2})(?:_MAP)?\.', photo_path.name)
+                    if loc_match:
+                        location = {'city': loc_match.group(2), 'country_code': loc_match.group(3)}
+
+                    # Add map watermark
+                    success = self.add_watermark_to_image(photo_path, datetime_str, location, gps_data, map_only=True)
+
+                    if success:
+                        # Rename file to add _MAP tag
+                        stem = photo_path.stem
+                        new_name = f"{stem}_MAP{photo_path.suffix}"
+                        new_path = photo_path.parent / new_name
+                        photo_path.rename(new_path)
+                        print(f"    → {new_name}")
+                        map_added_count += 1
+                elif not gps_data:
+                    print(f"  ⚠️  No GPS data - cannot add map")
+                    skipped_count += 1
+                continue
+
+            # Normal skip for already processed files
+            if skip_processed and is_processed:
                 print(f"  ⏭️  Skipped (already processed)")
                 skipped_count += 1
                 continue
@@ -723,33 +791,35 @@ class GPSPhotoRenamer:
                 location = self.geocode_location(lat, lon)
             else:
                 print(f"  ⚠️  No GPS data")
-            
+
             # Build new filename
             base_name = f"{datetime_str}{separator}{counter:04d}"
-            
+
             if location:
                 city = location['city']
                 country = location['country_code']
-                new_name = f"{base_name}{separator}{city}{separator}{country}{photo_path.suffix}"
+                # Add _MAP tag if map is enabled and GPS exists
+                map_tag = "_MAP" if add_map and gps_data else ""
+                new_name = f"{base_name}{separator}{city}{separator}{country}{map_tag}{photo_path.suffix}"
             else:
                 new_name = f"{base_name}{photo_path.suffix}"
-            
+
             new_path = photo_path.parent / new_name
-            
+
             # Rename file
             if not dry_run:
                 try:
                     photo_path.rename(new_path)
                     print(f"  ✓ {photo_path.name}")
                     print(f"    → {new_name}")
-                    
-                    # Add watermark if requested (with map if GPS available)
+
+                    # Add watermark if requested (with map if GPS available and map enabled)
                     if add_watermark:
-                        self.add_watermark_to_image(new_path, datetime_str, location, gps_data)
-                    
+                        self.add_watermark_to_image(new_path, datetime_str, location, gps_data, add_map=add_map)
+
                     if location:
                         print(f"    📍 {location['city']}, {location['country_code']}")
-                    
+
                     renamed_count += 1
                     counter += 1
                 except Exception as e:
@@ -777,6 +847,8 @@ class GPSPhotoRenamer:
         print(f"Found:        {len(photo_files)}")
         print(f"Processed:    {renamed_count}")
         print(f"Skipped:      {skipped_count}")
+        if map_added_count > 0:
+            print(f"Maps added:   {map_added_count}")
         if video_count > 0:
             print(f"Videos:       {video_count}")
             # Calculate total size of videos
@@ -797,35 +869,41 @@ def main():
     )
     parser.add_argument('directory', type=str, help='Directory containing photos')
     parser.add_argument('--api-key', type=str, help='LocationIQ API key (optional)')
-    parser.add_argument('--no-geocoding', action='store_true', 
+    parser.add_argument('--no-geocoding', action='store_true',
                        help='Disable geocoding (only use datetime)')
     parser.add_argument('--dry-run', action='store_true',
                        help='Show what would be renamed without actually renaming')
     parser.add_argument('--watermark', action='store_true',
                        help='Add watermark with date/time and location')
+    parser.add_argument('--map', action='store_true',
+                       help='Add map tile watermark with GPS location')
+    parser.add_argument('--reprocess-map', action='store_true',
+                       help='Reprocess already renamed files to add map')
     parser.add_argument('--no-skip', action='store_true',
                        help='Process already renamed files')
     parser.add_argument('--recursive', action='store_true',
                        help='Process subdirectories recursively')
     parser.add_argument('--separator', type=str, default='_',
                        help='Separator character for filename parts (default: _)')
-    
+
     args = parser.parse_args()
-    
+
     directory = Path(args.directory)
     if not directory.exists():
         print(f"Error: Directory not found: {directory}")
         sys.exit(1)
-    
+
     renamer = GPSPhotoRenamer(
         api_key=args.api_key,
         use_geocoding=not args.no_geocoding
     )
-    
+
     renamer.process_directory(
         directory=directory,
         dry_run=args.dry_run,
         add_watermark=args.watermark,
+        add_map=args.map,
+        reprocess_map=args.reprocess_map,
         skip_processed=not args.no_skip,
         recursive=args.recursive,
         separator=args.separator
