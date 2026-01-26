@@ -2,7 +2,7 @@
 
 Automatisches Umbenennen von Fotos basierend auf GPS EXIF-Daten und Datum - mit nativer macOS Benutzeroberfläche.
 
-[![Download](https://img.shields.io/badge/Download-v1.0.0-blue?style=for-the-badge)](https://github.com/Stebibastian/gps-photo-renamer/releases/latest)
+[![Download](https://img.shields.io/badge/Download-v1.0.1-blue?style=for-the-badge)](https://github.com/Stebibastian/gps-photo-renamer/releases/latest)
 [![macOS](https://img.shields.io/badge/macOS-10.14+-000000?style=flat-square&logo=apple)](https://www.apple.com/macos/)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 
@@ -44,7 +44,7 @@ Automatisches Umbenennen von Fotos basierend auf GPS EXIF-Daten und Datum - mit 
 
 ### Download (Empfohlen)
 
-1. **[📥 Download GPS Photo Renamer v1.0.0](https://github.com/Stebibastian/gps-photo-renamer/releases/latest)**
+1. **[📥 Download GPS Photo Renamer v1.0.1](https://github.com/Stebibastian/gps-photo-renamer/releases/latest)**
 2. ZIP-Datei entpacken
 3. `GPS Photo Renamer.app` in den Programme-Ordner verschieben
 4. Doppelklick zum Starten
@@ -117,6 +117,9 @@ Bei Problemen prüfe: `~/Desktop/gps_photo_renamer.log`
 - Foto hat GPS-Daten (EXIF prüfen)
 
 ## Changelog
+
+### v1.0.1 (2026-01-26)
+- 🔧 Fix: Ausführbare Berechtigungen für macOS App
 
 ### v1.0.0 (2026-01-26)
 - 🗺️ Kartenausschnitt mit OpenStreetMap
