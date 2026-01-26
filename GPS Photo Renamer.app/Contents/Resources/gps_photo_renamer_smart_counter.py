@@ -31,8 +31,9 @@ except ImportError:
 
 class GPSPhotoRenamer:
     """Renames photos based on GPS coordinates and datetime from EXIF data."""
-    
+
     PHOTO_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.heic', '.heif'}
+    VIDEO_EXTENSIONS = {'.mp4', '.mov', '.avi', '.mkv', '.m4v', '.3gp', '.webm', '.insv', '.lrv'}
     
     def __init__(self, api_key: Optional[str] = None, use_geocoding: bool = True):
         """
@@ -439,12 +440,42 @@ class GPSPhotoRenamer:
         
         return sorted(set(photo_files))
     
+    def find_video_files(self, directory: Path, recursive: bool = False) -> List[Path]:
+        """
+        Find all video files in directory.
+        Returns list of video file paths.
+        """
+        video_files = []
+
+        if recursive:
+            for ext in self.VIDEO_EXTENSIONS:
+                for file in directory.rglob(f'*{ext}'):
+                    if file.name.startswith('._'):
+                        continue
+                    video_files.append(file)
+                for file in directory.rglob(f'*{ext.upper()}'):
+                    if file.name.startswith('._'):
+                        continue
+                    video_files.append(file)
+        else:
+            for ext in self.VIDEO_EXTENSIONS:
+                for file in directory.glob(f'*{ext}'):
+                    if file.name.startswith('._'):
+                        continue
+                    video_files.append(file)
+                for file in directory.glob(f'*{ext.upper()}'):
+                    if file.name.startswith('._'):
+                        continue
+                    video_files.append(file)
+
+        return sorted(set(video_files))
+
     def cleanup_macos_files(self, directory: Path) -> None:
         """
         Delete macOS system files (.DS_Store and ._* resource forks).
         """
         deleted_count = 0
-        
+
         # Delete .DS_Store files
         for ds_store in directory.rglob('.DS_Store'):
             try:
@@ -452,7 +483,7 @@ class GPSPhotoRenamer:
                 deleted_count += 1
             except Exception as e:
                 print(f"  ⚠️  Error deleting {ds_store.name}: {e}")
-        
+
         # Delete ._* resource fork files
         for resource_fork in directory.rglob('._*'):
             try:
@@ -460,7 +491,7 @@ class GPSPhotoRenamer:
                 deleted_count += 1
             except Exception as e:
                 print(f"  ⚠️  Error deleting {resource_fork.name}: {e}")
-        
+
         if deleted_count > 0:
             print(f"\n🗑️  {deleted_count} macOS system files deleted")
         else:
@@ -582,7 +613,11 @@ class GPSPhotoRenamer:
         # Clean up macOS files if not dry-run
         if not dry_run:
             self.cleanup_macos_files(directory)
-        
+
+        # Find video files
+        video_files = self.find_video_files(directory, recursive)
+        video_count = len(video_files)
+
         # Summary
         print("\n" + "="*60)
         print("📊 SUMMARY")
@@ -590,6 +625,17 @@ class GPSPhotoRenamer:
         print(f"Found:        {len(photo_files)}")
         print(f"Processed:    {renamed_count}")
         print(f"Skipped:      {skipped_count}")
+        if video_count > 0:
+            print(f"Videos:       {video_count}")
+            # Calculate total size of videos
+            total_size = sum(f.stat().st_size for f in video_files)
+            size_mb = total_size / (1024 * 1024)
+            print(f"Video Size:   {size_mb:.1f} MB")
+            # List video files
+            print("\n🎬 Video files found:")
+            for vf in video_files:
+                vf_size = vf.stat().st_size / (1024 * 1024)
+                print(f"  • {vf.name} ({vf_size:.1f} MB)")
         print("="*60)
 
 

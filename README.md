@@ -12,6 +12,7 @@ Automatisches Umbenennen von Fotos basierend auf GPS EXIF-Daten und Datum - mit 
 - ✨ **Smart Counter** - Nummerierung setzt automatisch fort
 - 🌍 **GPS Geocoding** - Wandelt GPS-Koordinaten in Ortsnamen um
 - 💧 **Wasserzeichen** - Datum (oben-links) und Ort (oben-rechts)
+- 🎬 **Video-Erkennung** - Findet Videos und bietet Löschung an
 - 🧹 **macOS Cleanup** - Entfernt `.DS_Store` und `._*` Dateien automatisch
 
 ## Ausgabe-Format
@@ -56,9 +57,15 @@ Dependencies werden beim ersten Start automatisch installiert.
 
 ## Unterstützte Formate
 
+**Fotos:**
 - JPG / JPEG
 - PNG
 - HEIC / HEIF
+
+**Videos (werden erkannt, nicht umbenannt):**
+- MP4, MOV, AVI, MKV, M4V
+- 3GP, WebM
+- INSV, LRV (Insta360, GoPro)
 
 ## Problemlösung
 

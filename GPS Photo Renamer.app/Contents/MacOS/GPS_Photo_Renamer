@@ -1,8 +1,9 @@
 #!/bin/bash
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 
-# GPS Photo Renamer - UI Version v2.0.0
+# GPS Photo Renamer - UI Version v2.1.0
 # Renames photos based on GPS EXIF data with native macOS dialogs
+# v2.1.0: Video detection and deletion option
 
 # Funktion für Benachrichtigungen
 notify() {
@@ -23,7 +24,7 @@ show_error() {
 LOG_FILE="$HOME/Desktop/gps_photo_renamer.log"
 exec > "$LOG_FILE" 2>&1
 
-echo "=== GPS Photo Renamer v2.0.0 ==="
+echo "=== GPS Photo Renamer v2.1.0 ==="
 echo "$(date)"
 echo ""
 
@@ -245,23 +246,34 @@ echo "Exit-Code: $EXIT_CODE"
 FOUND=$(echo "$OUTPUT" | grep -o "Found:[[:space:]]*[0-9]*" | grep -o "[0-9]*" | tail -1)
 PROCESSED=$(echo "$OUTPUT" | grep -o "Processed:[[:space:]]*[0-9]*" | grep -o "[0-9]*" | tail -1)
 SKIPPED=$(echo "$OUTPUT" | grep -o "Skipped:[[:space:]]*[0-9]*" | grep -o "[0-9]*" | tail -1)
+VIDEOS=$(echo "$OUTPUT" | grep -o "Videos:[[:space:]]*[0-9]*" | grep -o "[0-9]*" | tail -1)
+VIDEO_SIZE=$(echo "$OUTPUT" | grep -o "Video Size:[[:space:]]*[0-9.]*" | grep -o "[0-9.]*" | tail -1)
 
 # Fallback-Werte
 FOUND=${FOUND:-$photo_count}
 PROCESSED=${PROCESSED:-0}
 SKIPPED=${SKIPPED:-0}
+VIDEOS=${VIDEOS:-0}
+VIDEO_SIZE=${VIDEO_SIZE:-0}
 
 # Schritt 6: Ergebnis anzeigen
 if [ $EXIT_CODE -eq 0 ]; then
     if [[ "$LOG_MODE" == "true" ]]; then
         # Log-Modus: Frage ob jetzt umbenennen
+        # Baue Video-Info für Dialog
+        VIDEO_INFO=""
+        if [ "$VIDEOS" -gt 0 ]; then
+            VIDEO_INFO="
+🎬 Videos gefunden: $VIDEOS (${VIDEO_SIZE} MB)"
+        fi
+
         proceed_choice=$(osascript <<APPLESCRIPT 2>/dev/null
 set theChoice to button returned of (display dialog "✅ Protokoll erstellt!
 
 📊 Vorschau:
 • Gefunden: $FOUND Fotos
 • Würden umbenannt: $PROCESSED
-• Würden übersprungen: $SKIPPED
+• Würden übersprungen: $SKIPPED${VIDEO_INFO}
 
 📄 Log: ~/Desktop/gps_photo_renamer.log
 
@@ -279,16 +291,27 @@ APPLESCRIPT
             EXIT_CODE=$?
             echo "$OUTPUT"
 
-            # Neue Statistiken extrahieren
+            # Neue Statistiken extrahieren (inkl. Videos)
             PROCESSED=$(echo "$OUTPUT" | grep -o "Processed:[[:space:]]*[0-9]*" | grep -o "[0-9]*" | tail -1)
+            VIDEOS=$(echo "$OUTPUT" | grep -o "Videos:[[:space:]]*[0-9]*" | grep -o "[0-9]*" | tail -1)
+            VIDEO_SIZE=$(echo "$OUTPUT" | grep -o "Video Size:[[:space:]]*[0-9.]*" | grep -o "[0-9.]*" | tail -1)
             PROCESSED=${PROCESSED:-0}
+            VIDEOS=${VIDEOS:-0}
+            VIDEO_SIZE=${VIDEO_SIZE:-0}
+
+            # Video-Info für Dialog
+            VIDEO_INFO_LOG=""
+            if [ "$VIDEOS" -gt 0 ]; then
+                VIDEO_INFO_LOG="
+🎬 Videos: $VIDEOS (${VIDEO_SIZE} MB)"
+            fi
 
             if [ $EXIT_CODE -eq 0 ]; then
                 osascript <<APPLESCRIPT
 display dialog "✅ Fotos wurden umbenannt!
 
 📊 Ergebnis:
-• Umbenannt: $PROCESSED Fotos
+• Umbenannt: $PROCESSED Fotos${VIDEO_INFO_LOG}
 
 📁 Schema: YYYYMMDDHHMMSS_NNNN_Ort_Land.jpg
 
@@ -302,6 +325,41 @@ if button returned of result is "Ordner öffnen" then
 end if
 APPLESCRIPT
                 notify "Fertig!" "$PROCESSED Fotos umbenannt"
+
+                # Video-Löschung anbieten (nach Log-Modus umbenennen)
+                if [ "$VIDEOS" -gt 0 ]; then
+                    video_delete_choice=$(osascript <<APPLESCRIPT 2>/dev/null
+try
+    set theChoice to button returned of (display dialog "🎬 Videos gefunden!
+
+Im Ordner wurden $VIDEOS Video-Dateien gefunden.
+Gesamtgröße: ${VIDEO_SIZE} MB
+
+Möchtest du diese Videos löschen?
+
+⚠️ Dies kann nicht rückgängig gemacht werden!" buttons {"Behalten", "Videos löschen"} default button 1 with title "GPS Photo Renamer - Videos" with icon caution)
+    return theChoice
+on error
+    return "Behalten"
+end try
+APPLESCRIPT
+                    )
+
+                    if [[ "$video_delete_choice" == "Videos löschen" ]]; then
+                        echo "Lösche Videos..."
+                        deleted_count=0
+                        while IFS= read -r -d '' video_file; do
+                            if [ -f "$video_file" ]; then
+                                rm "$video_file"
+                                echo "Gelöscht: $(basename "$video_file")"
+                                ((deleted_count++))
+                            fi
+                        done < <(find "$folder_path" -maxdepth 1 -type f \( -iname "*.mp4" -o -iname "*.mov" -o -iname "*.avi" -o -iname "*.mkv" -o -iname "*.m4v" -o -iname "*.3gp" -o -iname "*.webm" -o -iname "*.insv" -o -iname "*.lrv" \) ! -name "._*" -print0)
+
+                        notify "Videos gelöscht" "$deleted_count Videos wurden entfernt"
+                        osascript -e "display dialog \"🗑️ Videos gelöscht!\n\n$deleted_count Video-Dateien wurden entfernt.\" buttons {\"OK\"} default button 1 with title \"GPS Photo Renamer\""
+                    fi
+                fi
             else
                 osascript <<APPLESCRIPT
 display dialog "❌ Ein Fehler ist aufgetreten beim Umbenennen!
@@ -313,13 +371,20 @@ APPLESCRIPT
             open "$HOME/Desktop/gps_photo_renamer.log"
         fi
     else
+        # Baue Video-Info für Dialog
+        VIDEO_INFO_FINAL=""
+        if [ "$VIDEOS" -gt 0 ]; then
+            VIDEO_INFO_FINAL="
+🎬 Videos: $VIDEOS (${VIDEO_SIZE} MB)"
+        fi
+
         osascript <<APPLESCRIPT
 display dialog "✅ Fotos wurden umbenannt!
 
 📊 Ergebnis:
 • Gefunden: $FOUND Fotos
 • Umbenannt: $PROCESSED
-• Übersprungen: $SKIPPED
+• Übersprungen: $SKIPPED${VIDEO_INFO_FINAL}
 
 📁 Die Fotos wurden nach dem Schema umbenannt:
    YYYYMMDDHHMMSS_NNNN_Ort_Land.jpg
@@ -343,6 +408,56 @@ display dialog "❌ Ein Fehler ist aufgetreten!
 Bitte prüfe das Log für Details:
 ~/Desktop/gps_photo_renamer.log" buttons {"OK"} default button 1 with title "GPS Photo Renamer - Fehler" with icon stop
 APPLESCRIPT
+fi
+
+# Schritt 7: Frage nach Video-Löschung (wenn Videos gefunden)
+if [ "$VIDEOS" -gt 0 ] && [ "$EXIT_CODE" -eq 0 ] && [[ "$LOG_MODE" != "true" ]]; then
+    echo ""
+    echo "Videos gefunden: $VIDEOS (${VIDEO_SIZE} MB)"
+
+    # Extrahiere Video-Dateinamen aus dem Output
+    VIDEO_LIST=$(echo "$OUTPUT" | grep -A100 "🎬 Video files found:" | grep "^  •" | head -10)
+
+    video_delete_choice=$(osascript <<APPLESCRIPT 2>/dev/null
+try
+    set theChoice to button returned of (display dialog "🎬 Videos gefunden!
+
+Im Ordner wurden $VIDEOS Video-Dateien gefunden.
+Gesamtgröße: ${VIDEO_SIZE} MB
+
+Möchtest du diese Videos löschen?
+
+⚠️ Dies kann nicht rückgängig gemacht werden!" buttons {"Behalten", "Videos löschen"} default button 1 with title "GPS Photo Renamer - Videos" with icon caution)
+    return theChoice
+on error
+    return "Behalten"
+end try
+APPLESCRIPT
+    )
+
+    if [[ "$video_delete_choice" == "Videos löschen" ]]; then
+        echo "Lösche Videos..."
+
+        # Finde und lösche alle Videos im Ordner
+        deleted_count=0
+        while IFS= read -r -d '' video_file; do
+            if [ -f "$video_file" ]; then
+                rm "$video_file"
+                echo "Gelöscht: $(basename "$video_file")"
+                ((deleted_count++))
+            fi
+        done < <(find "$folder_path" -maxdepth 1 -type f \( -iname "*.mp4" -o -iname "*.mov" -o -iname "*.avi" -o -iname "*.mkv" -o -iname "*.m4v" -o -iname "*.3gp" -o -iname "*.webm" -o -iname "*.insv" -o -iname "*.lrv" \) ! -name "._*" -print0)
+
+        notify "Videos gelöscht" "$deleted_count Videos wurden entfernt"
+
+        osascript <<APPLESCRIPT
+display dialog "🗑️ Videos gelöscht!
+
+$deleted_count Video-Dateien wurden entfernt." buttons {"OK"} default button 1 with title "GPS Photo Renamer"
+APPLESCRIPT
+    else
+        echo "Videos wurden behalten."
+    fi
 fi
 
 echo ""
