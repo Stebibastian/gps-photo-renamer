@@ -232,19 +232,29 @@ class GPSPhotoRenamer:
         name = name.replace(' ', '')
         return name
     
-    def get_datetime_from_exif(self, exif: dict) -> Optional[str]:
-        """Extract datetime from EXIF and format it."""
+    def get_datetime_from_exif(self, exif: dict, file_path: Path = None) -> Optional[str]:
+        """Extract datetime from EXIF and format it. Falls back to file modification date."""
         datetime_tags = ['DateTimeOriginal', 'DateTime', 'DateTimeDigitized']
-        
+
         for tag in datetime_tags:
             if tag in exif:
                 try:
                     dt_str = exif[tag]
                     dt = datetime.strptime(dt_str, '%Y:%m:%d %H:%M:%S')
-                    return dt.strftime('%Y%m%d%H%M%S')  # 4-stelliges Jahr!
+                    return dt.strftime('%Y%m%d%H%M%S')
                 except (ValueError, TypeError):
                     continue
-        
+
+        # Fallback: Use file modification date (for Insta360 and other cameras without EXIF date)
+        if file_path and file_path.exists():
+            try:
+                mtime = file_path.stat().st_mtime
+                dt = datetime.fromtimestamp(mtime)
+                print(f"  ℹ️  Using file date (no EXIF date): {dt.strftime('%Y-%m-%d %H:%M:%S')}")
+                return dt.strftime('%Y%m%d%H%M%S')
+            except Exception:
+                pass
+
         return None
     
     def add_watermark_to_image(self, image_path: Path, datetime_str: Optional[str],
@@ -509,20 +519,19 @@ class GPSPhotoRenamer:
                 skipped_count += 1
                 continue
 
-            # Extract EXIF data
+            # Extract EXIF data (may be None for some cameras)
             exif = self.get_exif_data(photo_path)
             if not exif:
-                print(f"  ⚠️  No EXIF data found")
-                continue
+                exif = {}  # Use empty dict, will fall back to file date
 
-            # Get datetime
-            datetime_str = self.get_datetime_from_exif(exif)
+            # Get datetime (with file date fallback for Insta360 etc.)
+            datetime_str = self.get_datetime_from_exif(exif, photo_path)
             if not datetime_str:
-                print(f"  ⚠️  No date in EXIF found")
+                print(f"  ⚠️  No date found (EXIF or file)")
                 continue
 
             # Get GPS data
-            gps_data = self.get_gps_data(exif)
+            gps_data = self.get_gps_data(exif) if exif else None
             location = None
 
             if gps_data:
