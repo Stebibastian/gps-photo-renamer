@@ -247,22 +247,33 @@ class GPSPhotoRenamer:
         
         return None
     
-    def add_watermark_to_image(self, image_path: Path, datetime_str: Optional[str], 
+    def add_watermark_to_image(self, image_path: Path, datetime_str: Optional[str],
                                location: Optional[Dict] = None) -> bool:
         """
         Add watermark to image with date/time on left and location on right.
-        
+        Respects EXIF orientation to handle portrait/landscape correctly.
+
         Args:
             image_path: Path to image file
             datetime_str: Datetime string in format YYYYMMDDHHMMSS
             location: Dictionary with 'city' and 'country_code' keys
-            
+
         Returns:
             True if watermark was added successfully
         """
         try:
             # Open image
-            img = Image.open(image_path).convert('RGBA')
+            img = Image.open(image_path)
+
+            # WICHTIG: EXIF-Orientierung auslesen und Bild korrekt drehen
+            try:
+                from PIL import ImageOps
+                img = ImageOps.exif_transpose(img)
+            except Exception as e:
+                print(f"  ⚠️  Could not apply EXIF orientation: {e}")
+
+            # Convert to RGBA for watermark
+            img = img.convert('RGBA')
             
             # Create drawing overlay
             overlay = Image.new('RGBA', img.size, (0, 0, 0, 0))

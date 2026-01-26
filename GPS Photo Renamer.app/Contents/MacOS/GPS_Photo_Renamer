@@ -1,0 +1,354 @@
+#!/bin/bash
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+
+# GPS Photo Renamer - UI Version v2.0.0
+# Renames photos based on GPS EXIF data with native macOS dialogs
+
+# Funktion für Benachrichtigungen
+notify() {
+    osascript -e "display notification \"$2\" with title \"GPS Photo Renamer\" subtitle \"$1\""
+}
+
+# Funktion für Dialogs
+show_dialog() {
+    osascript -e "display dialog \"$1\" with title \"GPS Photo Renamer\" buttons {\"OK\"} default button 1"
+}
+
+# Funktion für Fehler-Dialogs
+show_error() {
+    osascript -e "display dialog \"❌ Fehler: $1\" with title \"GPS Photo Renamer\" buttons {\"OK\"} default button 1 with icon stop"
+}
+
+# Logging
+LOG_FILE="$HOME/Desktop/gps_photo_renamer.log"
+exec > "$LOG_FILE" 2>&1
+
+echo "=== GPS Photo Renamer v2.0.0 ==="
+echo "$(date)"
+echo ""
+
+# Schritt 1: Prüfe und installiere Dependencies
+notify "Prüfe System" "Überprüfe installierte Tools..."
+
+INSTALL_FAILED=0
+
+# Prüfe Python
+if ! command -v python3 &> /dev/null; then
+    show_error "Python 3 nicht gefunden!\n\nBitte installiere Python 3:\nbrew install python3"
+    exit 1
+fi
+
+# Prüfe Pillow
+if ! python3 -c "from PIL import Image" 2>/dev/null; then
+    notify "Installation" "Installiere Pillow..."
+
+    if ! pip3 install Pillow --break-system-packages 2>&1; then
+        show_error "Pillow Installation fehlgeschlagen!\n\nBitte installiere manuell:\npip3 install Pillow --break-system-packages"
+        INSTALL_FAILED=1
+    fi
+fi
+
+# Prüfe requests
+if ! python3 -c "import requests" 2>/dev/null; then
+    notify "Installation" "Installiere requests..."
+
+    if ! pip3 install requests --break-system-packages 2>&1; then
+        show_error "requests Installation fehlgeschlagen!\n\nBitte installiere manuell:\npip3 install requests --break-system-packages"
+        INSTALL_FAILED=1
+    fi
+fi
+
+if [ $INSTALL_FAILED -eq 1 ]; then
+    osascript <<'HELP_DIALOG'
+display dialog "⚠️ Installation fehlgeschlagen!
+
+📋 Bitte führe die folgenden Schritte MANUELL aus:
+
+1️⃣ Python 3 installieren (falls nicht vorhanden):
+   brew install python3
+
+2️⃣ Python-Pakete installieren:
+   pip3 install Pillow requests --break-system-packages
+
+📄 Details im Log: ~/Desktop/gps_photo_renamer.log
+
+Nach der manuellen Installation die App erneut starten!" buttons {"OK"} default button 1 with title "GPS Photo Renamer - Installation" with icon stop
+HELP_DIALOG
+    exit 1
+fi
+
+echo "✓ Alle Dependencies installiert"
+notify "Bereit!" "Alle Tools sind installiert"
+echo ""
+
+# Schritt 2: Wähle Foto-Ordner
+folder_path=$(osascript <<'APPLESCRIPT' 2>/dev/null
+try
+    set theFolder to choose folder with prompt "Wähle einen Ordner mit Fotos:"
+    return POSIX path of theFolder
+on error
+    return "ABGEBROCHEN"
+end try
+APPLESCRIPT
+)
+
+if [[ "$folder_path" == "ABGEBROCHEN" ]] || [[ -z "$folder_path" ]]; then
+    exit 0
+fi
+
+# Entferne trailing slash
+folder_path="${folder_path%/}"
+
+echo "Gewählter Ordner: $folder_path"
+
+# Zähle Fotos im Ordner
+photo_count=$(find "$folder_path" -maxdepth 1 -type f \( -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" -o -iname "*.heic" -o -iname "*.heif" \) ! -name "._*" | wc -l | tr -d ' ')
+
+if [ "$photo_count" -eq 0 ]; then
+    show_error "Keine Fotos gefunden!\n\nUnterstützte Formate:\n• JPG/JPEG\n• PNG\n• HEIC/HEIF"
+    exit 1
+fi
+
+echo "Gefundene Fotos: $photo_count"
+
+# Schritt 3: Zeige Optionen-Dialog
+options_result=$(osascript <<APPLESCRIPT 2>/dev/null
+try
+    set theChoice to display dialog "📸 GPS Photo Renamer
+
+📁 Ordner: $(basename "$folder_path")
+📷 Fotos gefunden: $photo_count
+
+Wähle die gewünschten Optionen:" buttons {"Abbrechen", "Optionen wählen"} default button 2 with title "GPS Photo Renamer"
+
+    if button returned of theChoice is "Abbrechen" then
+        return "ABGEBROCHEN"
+    end if
+
+    -- Log-Modus Option
+    set dryrunChoice to button returned of (display dialog "📋 Erst nur protokollieren (Log-Modus)?
+
+Im Log-Modus werden keine Dateien geändert.
+Du siehst zuerst, was passieren würde.
+
+Nach dem Log kannst du direkt umbenennen." buttons {"Nein, direkt umbenennen", "Ja, erst Log anzeigen"} default button 2 with title "GPS Photo Renamer - Modus")
+
+    -- Wasserzeichen und Geocoding immer aktiv, Unterordner nie
+    set watermarkChoice to "Ja"
+    set geocodingChoice to "Ja"
+    set recursiveChoice to "Nein"
+
+    return watermarkChoice & "|" & geocodingChoice & "|" & recursiveChoice & "|" & dryrunChoice
+
+on error
+    return "ABGEBROCHEN"
+end try
+APPLESCRIPT
+)
+
+echo "Optionen-Ergebnis: $options_result"
+
+if [[ "$options_result" == "ABGEBROCHEN" ]] || [[ -z "$options_result" ]]; then
+    exit 0
+fi
+
+# Parse Optionen
+IFS='|' read -r WATERMARK GEOCODING RECURSIVE DRYRUN <<< "$options_result"
+
+echo "Watermark: $WATERMARK"
+echo "Geocoding: $GEOCODING"
+echo "Recursive: $RECURSIVE"
+echo "Dry-Run: $DRYRUN"
+
+# Baue Python-Argumente
+PYTHON_ARGS=""
+
+if [[ "$WATERMARK" == "Ja" ]]; then
+    PYTHON_ARGS="$PYTHON_ARGS --watermark"
+fi
+
+if [[ "$GEOCODING" == "Nein" ]]; then
+    PYTHON_ARGS="$PYTHON_ARGS --no-geocoding"
+fi
+
+if [[ "$RECURSIVE" == "Ja" ]]; then
+    PYTHON_ARGS="$PYTHON_ARGS --recursive"
+fi
+
+LOG_MODE="false"
+if [[ "$DRYRUN" == "Ja, erst Log anzeigen" ]] || [[ "$DRYRUN" == "Ja, nur protokollieren" ]]; then
+    PYTHON_ARGS="$PYTHON_ARGS --dry-run"
+    LOG_MODE="true"
+fi
+
+echo "Python-Argumente: $PYTHON_ARGS"
+
+# Schritt 4: Bestätigung
+confirm_result=$(osascript <<APPLESCRIPT 2>/dev/null
+try
+    set optionList to ""
+
+    -- Immer aktiv
+    set optionList to optionList & "• Wasserzeichen: Ja ✓" & return
+    set optionList to optionList & "• GPS-Ortsnamen: Ja ✓" & return
+
+    if "$LOG_MODE" is "true" then
+        set optionList to optionList & "• Modus: Erst Log anzeigen" & return
+    else
+        set optionList to optionList & "• Modus: Direkt umbenennen" & return
+    end if
+
+    set theChoice to button returned of (display dialog "📋 Zusammenfassung
+
+📁 Ordner: $(basename "$folder_path")
+📷 Fotos: $photo_count
+
+Optionen:
+" & optionList & "
+Jetzt starten?" buttons {"Abbrechen", "Starten"} default button 2 with title "GPS Photo Renamer - Bestätigung")
+
+    return theChoice
+on error
+    return "ABGEBROCHEN"
+end try
+APPLESCRIPT
+)
+
+if [[ "$confirm_result" != "Starten" ]]; then
+    exit 0
+fi
+
+# Schritt 5: Verarbeitung starten
+notify "Verarbeitung läuft" "Fotos werden umbenannt..."
+
+# Finde das Python-Script (relativ zum App-Bundle)
+SCRIPT_DIR="$(cd "$(dirname "$0")/../../../" && pwd)"
+PYTHON_SCRIPT="$SCRIPT_DIR/gps_photo_renamer_smart_counter.py"
+
+# Fallback: Neben der App
+if [ ! -f "$PYTHON_SCRIPT" ]; then
+    PYTHON_SCRIPT="$(dirname "$(dirname "$(dirname "$(dirname "$0")")")")/gps_photo_renamer_smart_counter.py"
+fi
+
+if [ ! -f "$PYTHON_SCRIPT" ]; then
+    show_error "Python-Script nicht gefunden!\n\n$PYTHON_SCRIPT"
+    exit 1
+fi
+
+echo "Python-Script: $PYTHON_SCRIPT"
+echo "Starte Verarbeitung..."
+
+# Führe Python-Script aus und fange Output auf
+OUTPUT=$(python3 "$PYTHON_SCRIPT" "$folder_path" $PYTHON_ARGS 2>&1)
+EXIT_CODE=$?
+
+echo "$OUTPUT"
+echo ""
+echo "Exit-Code: $EXIT_CODE"
+
+# Extrahiere Statistiken aus dem Output
+FOUND=$(echo "$OUTPUT" | grep -o "Found:[[:space:]]*[0-9]*" | grep -o "[0-9]*" | tail -1)
+PROCESSED=$(echo "$OUTPUT" | grep -o "Processed:[[:space:]]*[0-9]*" | grep -o "[0-9]*" | tail -1)
+SKIPPED=$(echo "$OUTPUT" | grep -o "Skipped:[[:space:]]*[0-9]*" | grep -o "[0-9]*" | tail -1)
+
+# Fallback-Werte
+FOUND=${FOUND:-$photo_count}
+PROCESSED=${PROCESSED:-0}
+SKIPPED=${SKIPPED:-0}
+
+# Schritt 6: Ergebnis anzeigen
+if [ $EXIT_CODE -eq 0 ]; then
+    if [[ "$LOG_MODE" == "true" ]]; then
+        # Log-Modus: Frage ob jetzt umbenennen
+        proceed_choice=$(osascript <<APPLESCRIPT 2>/dev/null
+set theChoice to button returned of (display dialog "✅ Protokoll erstellt!
+
+📊 Vorschau:
+• Gefunden: $FOUND Fotos
+• Würden umbenannt: $PROCESSED
+• Würden übersprungen: $SKIPPED
+
+📄 Log: ~/Desktop/gps_photo_renamer.log
+
+Jetzt die Fotos wirklich umbenennen?" buttons {"Abbrechen", "Log öffnen", "Jetzt umbenennen"} default button 3 with title "GPS Photo Renamer - Log fertig")
+return theChoice
+APPLESCRIPT
+        )
+
+        if [[ "$proceed_choice" == "Jetzt umbenennen" ]]; then
+            notify "Umbenennen" "Fotos werden jetzt umbenannt..."
+
+            # Führe ohne dry-run aus
+            REAL_ARGS="${PYTHON_ARGS/--dry-run/}"
+            OUTPUT=$(python3 "$PYTHON_SCRIPT" "$folder_path" $REAL_ARGS 2>&1)
+            EXIT_CODE=$?
+            echo "$OUTPUT"
+
+            # Neue Statistiken extrahieren
+            PROCESSED=$(echo "$OUTPUT" | grep -o "Processed:[[:space:]]*[0-9]*" | grep -o "[0-9]*" | tail -1)
+            PROCESSED=${PROCESSED:-0}
+
+            if [ $EXIT_CODE -eq 0 ]; then
+                osascript <<APPLESCRIPT
+display dialog "✅ Fotos wurden umbenannt!
+
+📊 Ergebnis:
+• Umbenannt: $PROCESSED Fotos
+
+📁 Schema: YYYYMMDDHHMMSS_NNNN_Ort_Land.jpg
+
+📄 Log: ~/Desktop/gps_photo_renamer.log" buttons {"OK", "Ordner öffnen"} default button 2 with title "GPS Photo Renamer - Fertig"
+
+if button returned of result is "Ordner öffnen" then
+    tell application "Finder"
+        activate
+        open POSIX file "$folder_path"
+    end tell
+end if
+APPLESCRIPT
+                notify "Fertig!" "$PROCESSED Fotos umbenannt"
+            else
+                osascript <<APPLESCRIPT
+display dialog "❌ Ein Fehler ist aufgetreten beim Umbenennen!
+
+📄 Log: ~/Desktop/gps_photo_renamer.log" buttons {"OK"} default button 1 with title "GPS Photo Renamer - Fehler" with icon stop
+APPLESCRIPT
+            fi
+        elif [[ "$proceed_choice" == "Log öffnen" ]]; then
+            open "$HOME/Desktop/gps_photo_renamer.log"
+        fi
+    else
+        osascript <<APPLESCRIPT
+display dialog "✅ Fotos wurden umbenannt!
+
+📊 Ergebnis:
+• Gefunden: $FOUND Fotos
+• Umbenannt: $PROCESSED
+• Übersprungen: $SKIPPED
+
+📁 Die Fotos wurden nach dem Schema umbenannt:
+   YYYYMMDDHHMMSS_NNNN_Ort_Land.jpg
+
+📄 Log: ~/Desktop/gps_photo_renamer.log" buttons {"OK", "Ordner öffnen"} default button 2 with title "GPS Photo Renamer - Fertig"
+
+if button returned of result is "Ordner öffnen" then
+    tell application "Finder"
+        activate
+        open POSIX file "$folder_path"
+    end tell
+end if
+APPLESCRIPT
+
+        notify "Fertig!" "$PROCESSED Fotos verarbeitet"
+    fi
+else
+    osascript <<APPLESCRIPT
+display dialog "❌ Ein Fehler ist aufgetreten!
+
+Bitte prüfe das Log für Details:
+~/Desktop/gps_photo_renamer.log" buttons {"OK"} default button 1 with title "GPS Photo Renamer - Fehler" with icon stop
+APPLESCRIPT
+fi
+
+echo ""
+echo "=== FERTIG ==="
