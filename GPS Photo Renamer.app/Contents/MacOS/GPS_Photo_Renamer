@@ -1,11 +1,12 @@
 #!/bin/bash
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 
-# GPS Photo Renamer - UI Version v2.3.0
+# GPS Photo Renamer - UI Version v2.4.0
 # Renames photos based on GPS EXIF data with native macOS dialogs
 # v2.1.0: Video detection and deletion option
 # v2.2.0: Map tile watermark from OpenStreetMap
 # v2.3.0: Map option dialog, reprocess existing photos, _MAP tag, bigger map
+# v2.4.0: Custom map settings (size, transparency, zoom)
 
 # Funktion für Benachrichtigungen
 notify() {
@@ -26,7 +27,7 @@ show_error() {
 LOG_FILE="$HOME/Desktop/gps_photo_renamer.log"
 exec > "$LOG_FILE" 2>&1
 
-echo "=== GPS Photo Renamer v2.3.0 ==="
+echo "=== GPS Photo Renamer v2.4.0 ==="
 echo "$(date)"
 echo ""
 
@@ -142,6 +143,58 @@ Nach dem Log kannst du direkt umbenennen." buttons {"Nein, direkt umbenennen", "
 Ein kleiner OpenStreetMap-Ausschnitt wird
 rechts oben auf dem Foto angezeigt." buttons {"Nein", "Ja"} default button 2 with title "GPS Photo Renamer - Karte")
 
+    -- Karten-Einstellungen (nur wenn Karte gewählt)
+    set mapSettingsChoice to "Standard"
+    set mapSizeChoice to "Mittel"
+    set mapTransparencyChoice to "Normal"
+    set mapZoomChoice to "Stadtteil"
+
+    if mapChoice is "Ja" then
+        -- Standard oder Benutzerdefiniert?
+        set mapSettingsChoice to button returned of (display dialog "⚙️ Karten-Einstellungen
+
+Standard: 280×280px, 70% sichtbar, Stadtteil-Zoom
+Benutzerdefiniert: Größe, Transparenz und Zoom selbst wählen" buttons {"Standard", "Benutzerdefiniert"} default button 1 with title "GPS Photo Renamer - Karten-Einstellungen")
+
+        if mapSettingsChoice is "Benutzerdefiniert" then
+            -- Größe wählen
+            set mapSizeChoice to button returned of (display dialog "📐 Kartengröße wählen
+
+Klein: 180×180 Pixel
+→ Dezent, wenig Platz
+
+Mittel: 280×280 Pixel
+→ Gut sichtbar, Standard
+
+Groß: 380×380 Pixel
+→ Sehr prominent, mehr Details" buttons {"Klein", "Mittel", "Groß"} default button 2 with title "GPS Photo Renamer - Kartengröße")
+
+            -- Transparenz wählen
+            set mapTransparencyChoice to button returned of (display dialog "👁️ Karten-Transparenz wählen
+
+Dezent: 50% sichtbar
+→ Foto scheint stark durch
+
+Normal: 70% sichtbar
+→ Gute Balance, Standard
+
+Kräftig: 90% sichtbar
+→ Karte sehr deutlich" buttons {"Dezent", "Normal", "Kräftig"} default button 2 with title "GPS Photo Renamer - Transparenz")
+
+            -- Zoom wählen
+            set mapZoomChoice to button returned of (display dialog "🔍 Karten-Zoom wählen
+
+Straße: Zoom 15
+→ Zeigt Straßen, genaue Position
+
+Stadtteil: Zoom 13
+→ Zeigt Nachbarschaft/Dorf, Standard
+
+Region: Zoom 11
+→ Zeigt größere Umgebung/Stadt" buttons {"Straße", "Stadtteil", "Region"} default button 2 with title "GPS Photo Renamer - Zoom")
+        end if
+    end if
+
     -- Wenn Karte gewünscht: Frage nach bereits bearbeiteten Fotos
     set reprocessMapChoice to "Nein"
     if mapChoice is "Ja" then
@@ -155,7 +208,7 @@ Fotos die schon umbenannt wurden (aber noch keine Karte haben) können nachträg
     set geocodingChoice to "Ja"
     set recursiveChoice to "Nein"
 
-    return watermarkChoice & "|" & geocodingChoice & "|" & recursiveChoice & "|" & dryrunChoice & "|" & mapChoice & "|" & reprocessMapChoice
+    return watermarkChoice & "|" & geocodingChoice & "|" & recursiveChoice & "|" & dryrunChoice & "|" & mapChoice & "|" & reprocessMapChoice & "|" & mapSizeChoice & "|" & mapTransparencyChoice & "|" & mapZoomChoice
 
 on error
     return "ABGEBROCHEN"
@@ -170,7 +223,7 @@ if [[ "$options_result" == "ABGEBROCHEN" ]] || [[ -z "$options_result" ]]; then
 fi
 
 # Parse Optionen
-IFS='|' read -r WATERMARK GEOCODING RECURSIVE DRYRUN MAP_OPTION REPROCESS_MAP <<< "$options_result"
+IFS='|' read -r WATERMARK GEOCODING RECURSIVE DRYRUN MAP_OPTION REPROCESS_MAP MAP_SIZE MAP_TRANSPARENCY MAP_ZOOM <<< "$options_result"
 
 echo "Watermark: $WATERMARK"
 echo "Geocoding: $GEOCODING"
@@ -178,6 +231,9 @@ echo "Recursive: $RECURSIVE"
 echo "Dry-Run: $DRYRUN"
 echo "Map: $MAP_OPTION"
 echo "Reprocess Map: $REPROCESS_MAP"
+echo "Map Size: $MAP_SIZE"
+echo "Map Transparency: $MAP_TRANSPARENCY"
+echo "Map Zoom: $MAP_ZOOM"
 
 # Baue Python-Argumente
 PYTHON_ARGS=""
@@ -196,6 +252,45 @@ fi
 
 if [[ "$MAP_OPTION" == "Ja" ]]; then
     PYTHON_ARGS="$PYTHON_ARGS --map"
+
+    # Map Size
+    case "$MAP_SIZE" in
+        "Klein")
+            PYTHON_ARGS="$PYTHON_ARGS --map-size 180"
+            ;;
+        "Mittel")
+            PYTHON_ARGS="$PYTHON_ARGS --map-size 280"
+            ;;
+        "Groß")
+            PYTHON_ARGS="$PYTHON_ARGS --map-size 380"
+            ;;
+    esac
+
+    # Map Transparency (als Prozent sichtbar)
+    case "$MAP_TRANSPARENCY" in
+        "Dezent")
+            PYTHON_ARGS="$PYTHON_ARGS --map-opacity 50"
+            ;;
+        "Normal")
+            PYTHON_ARGS="$PYTHON_ARGS --map-opacity 70"
+            ;;
+        "Kräftig")
+            PYTHON_ARGS="$PYTHON_ARGS --map-opacity 90"
+            ;;
+    esac
+
+    # Map Zoom
+    case "$MAP_ZOOM" in
+        "Straße")
+            PYTHON_ARGS="$PYTHON_ARGS --map-zoom 15"
+            ;;
+        "Stadtteil")
+            PYTHON_ARGS="$PYTHON_ARGS --map-zoom 13"
+            ;;
+        "Region")
+            PYTHON_ARGS="$PYTHON_ARGS --map-zoom 11"
+            ;;
+    esac
 fi
 
 if [[ "$REPROCESS_MAP" == "Ja, alle mit Karte" ]]; then

@@ -351,7 +351,8 @@ class GPSPhotoRenamer:
     def add_watermark_to_image(self, image_path: Path, datetime_str: Optional[str],
                                location: Optional[Dict] = None,
                                gps_coords: Optional[Dict[str, float]] = None,
-                               add_map: bool = True, map_only: bool = False) -> bool:
+                               add_map: bool = True, map_only: bool = False,
+                               map_size: int = 280, map_opacity: int = 70, map_zoom: int = 13) -> bool:
         """
         Add watermark to image with date/time on left, location on right,
         and optional map tile below the location text.
@@ -364,6 +365,9 @@ class GPSPhotoRenamer:
             gps_coords: Dictionary with 'latitude' and 'longitude' keys for map
             add_map: If True, add map tile (default True)
             map_only: If True, only add map (for reprocessing existing photos)
+            map_size: Size of map in pixels (default: 280)
+            map_opacity: Opacity of map in percent (default: 70)
+            map_zoom: Zoom level for map (default: 13)
 
         Returns:
             True if watermark was added successfully
@@ -465,24 +469,25 @@ class GPSPhotoRenamer:
             # MAP TILE: Below the location text, aligned with right edge of text
             if add_map and gps_coords and gps_coords.get('latitude') and gps_coords.get('longitude'):
                 try:
-                    # Calculate map size - BIGGER: 15% of smallest dimension, min 200, max 350
-                    map_size = max(200, min(350, int(min_dimension * 0.18)))
+                    # Use provided map_size (user-configurable)
+                    actual_map_size = map_size
 
-                    # Fetch map tile
+                    # Fetch map tile with user-configurable zoom
                     map_img = self.get_map_tile(
                         gps_coords['latitude'],
                         gps_coords['longitude'],
-                        size=map_size,
-                        zoom=13
+                        size=actual_map_size,
+                        zoom=map_zoom
                     )
 
                     if map_img:
                         # Convert map to RGBA
                         map_img = map_img.convert('RGBA')
 
-                        # Apply 70% opacity (less transparent than before)
+                        # Apply user-configurable opacity
+                        opacity_factor = map_opacity / 100.0
                         alpha = map_img.split()[3] if map_img.mode == 'RGBA' else Image.new('L', map_img.size, 255)
-                        alpha = alpha.point(lambda p: int(p * 0.7))  # 70% opacity
+                        alpha = alpha.point(lambda p: int(p * opacity_factor))
 
                         # Make map semi-transparent
                         map_rgba = Image.new('RGBA', map_img.size, (0, 0, 0, 0))
@@ -501,10 +506,10 @@ class GPSPhotoRenamer:
                         if right_text_width > 0:
                             # Align map right edge with text right edge
                             text_right_edge = right_x + right_text_width + padding//2
-                            map_x = text_right_edge - map_size - border_size
+                            map_x = text_right_edge - actual_map_size - border_size
                         else:
                             # No text, align to right edge of image
-                            map_x = img.size[0] - map_size - padding - border_size
+                            map_x = img.size[0] - actual_map_size - padding - border_size
 
                         # Vertical position: below text with small gap
                         map_y = padding + right_text_height + padding if right_text_height > 0 else padding
@@ -512,7 +517,7 @@ class GPSPhotoRenamer:
                         # Draw white border rectangle
                         border_draw.rectangle(
                             [map_x - border_size, map_y - border_size,
-                             map_x + map_size + border_size, map_y + map_size + border_size],
+                             map_x + actual_map_size + border_size, map_y + actual_map_size + border_size],
                             fill=(255, 255, 255, 200)
                         )
 
@@ -522,7 +527,7 @@ class GPSPhotoRenamer:
                         # Paste the semi-transparent map
                         img.paste(map_rgba, (map_x, map_y), map_rgba)
 
-                        print(f"  🗺️  Map added ({map_size}x{map_size}px)")
+                        print(f"  🗺️  Map added ({actual_map_size}x{actual_map_size}px, {map_opacity}% opacity, zoom {map_zoom})")
 
                 except Exception as e:
                     print(f"  ⚠️  Could not add map: {e}")
@@ -671,6 +676,7 @@ class GPSPhotoRenamer:
     
     def process_directory(self, directory: Path, dry_run: bool = False,
                          add_watermark: bool = False, add_map: bool = False,
+                         map_size: int = 280, map_opacity: int = 70, map_zoom: int = 13,
                          reprocess_map: bool = False, skip_processed: bool = True,
                          recursive: bool = False, separator: str = '_'):
         """
@@ -681,6 +687,9 @@ class GPSPhotoRenamer:
             dry_run: If True, only show what would be renamed
             add_watermark: If True, add watermark to images
             add_map: If True, add map tile to images
+            map_size: Size of map in pixels (default: 280)
+            map_opacity: Opacity of map in percent (default: 70)
+            map_zoom: Zoom level for map (default: 13)
             reprocess_map: If True, add map to already processed files without _MAP tag
             skip_processed: If True, skip files that match the processed pattern
             recursive: If True, process subdirectories recursively
@@ -694,7 +703,7 @@ class GPSPhotoRenamer:
         if add_watermark:
             print(f"Watermark:    Yes (Date left, Location right)")
         if add_map:
-            print(f"Map:          Yes (OpenStreetMap tile)")
+            print(f"Map:          Yes ({map_size}px, {map_opacity}% opacity, zoom {map_zoom})")
         if reprocess_map:
             print(f"Reprocess:    Yes (Add map to existing photos)")
         print("="*60)
@@ -748,8 +757,11 @@ class GPSPhotoRenamer:
                     if loc_match:
                         location = {'city': loc_match.group(2), 'country_code': loc_match.group(3)}
 
-                    # Add map watermark
-                    success = self.add_watermark_to_image(photo_path, datetime_str, location, gps_data, map_only=True)
+                    # Add map watermark with user settings
+                    success = self.add_watermark_to_image(
+                        photo_path, datetime_str, location, gps_data,
+                        map_only=True, map_size=map_size, map_opacity=map_opacity, map_zoom=map_zoom
+                    )
 
                     if success:
                         # Rename file to add _MAP tag
@@ -815,7 +827,10 @@ class GPSPhotoRenamer:
 
                     # Add watermark if requested (with map if GPS available and map enabled)
                     if add_watermark:
-                        self.add_watermark_to_image(new_path, datetime_str, location, gps_data, add_map=add_map)
+                        self.add_watermark_to_image(
+                            new_path, datetime_str, location, gps_data,
+                            add_map=add_map, map_size=map_size, map_opacity=map_opacity, map_zoom=map_zoom
+                        )
 
                     if location:
                         print(f"    📍 {location['city']}, {location['country_code']}")
@@ -877,6 +892,12 @@ def main():
                        help='Add watermark with date/time and location')
     parser.add_argument('--map', action='store_true',
                        help='Add map tile watermark with GPS location')
+    parser.add_argument('--map-size', type=int, default=280,
+                       help='Map size in pixels (default: 280)')
+    parser.add_argument('--map-opacity', type=int, default=70,
+                       help='Map opacity in percent (default: 70)')
+    parser.add_argument('--map-zoom', type=int, default=13,
+                       help='Map zoom level (default: 13)')
     parser.add_argument('--reprocess-map', action='store_true',
                        help='Reprocess already renamed files to add map')
     parser.add_argument('--no-skip', action='store_true',
@@ -903,6 +924,9 @@ def main():
         dry_run=args.dry_run,
         add_watermark=args.watermark,
         add_map=args.map,
+        map_size=args.map_size,
+        map_opacity=args.map_opacity,
+        map_zoom=args.map_zoom,
         reprocess_map=args.reprocess_map,
         skip_processed=not args.no_skip,
         recursive=args.recursive,
