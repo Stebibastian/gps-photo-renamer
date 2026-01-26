@@ -2,6 +2,10 @@
 
 Automatically rename photos based on GPS EXIF data and datetime - with native macOS UI.
 
+## Download
+
+**[⬇️ Download ZIP](https://github.com/Stebibastian/gps-photo-renamer/archive/refs/heads/main.zip)**
+
 ## Features
 
 - 🖥️ **Native macOS App** - No Terminal required
@@ -19,7 +23,7 @@ After:  20241226093045_0001_Graz_AT.jpg
 
 ## Installation
 
-1. Download or clone this repository
+1. **[Download ZIP](https://github.com/Stebibastian/gps-photo-renamer/archive/refs/heads/main.zip)** and extract
 2. Move `GPS Photo Renamer.app` to your Applications folder
 3. **Important:** Keep `gps_photo_renamer_smart_counter.py` in the same folder!
 4. Double-click to start
@@ -36,13 +40,10 @@ After:  20241226093045_0001_Graz_AT.jpg
 ## Requirements
 
 - macOS 10.14+
-- Python 3.7+
+- Python 3 (pre-installed on macOS)
 - Internet connection (for GPS location lookup)
 
-Dependencies are installed automatically:
-```bash
-pip3 install Pillow requests --break-system-packages
-```
+Dependencies are installed automatically on first run.
 
 ## Supported Formats
 
