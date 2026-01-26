@@ -1,9 +1,10 @@
 #!/bin/bash
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 
-# GPS Photo Renamer - UI Version v2.1.0
+# GPS Photo Renamer - UI Version v2.2.0
 # Renames photos based on GPS EXIF data with native macOS dialogs
 # v2.1.0: Video detection and deletion option
+# v2.2.0: Map tile watermark from OpenStreetMap
 
 # Funktion für Benachrichtigungen
 notify() {
@@ -24,7 +25,7 @@ show_error() {
 LOG_FILE="$HOME/Desktop/gps_photo_renamer.log"
 exec > "$LOG_FILE" 2>&1
 
-echo "=== GPS Photo Renamer v2.1.0 ==="
+echo "=== GPS Photo Renamer v2.2.0 ==="
 echo "$(date)"
 echo ""
 

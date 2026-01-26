@@ -12,6 +12,7 @@ Automatisches Umbenennen von Fotos basierend auf GPS EXIF-Daten und Datum - mit 
 - ✨ **Smart Counter** - Nummerierung setzt automatisch fort
 - 🌍 **GPS Geocoding** - Wandelt GPS-Koordinaten in Ortsnamen um
 - 💧 **Wasserzeichen** - Datum (oben-links) und Ort (oben-rechts)
+- 🗺️ **Kartenausschnitt** - Kleiner OpenStreetMap-Ausschnitt mit GPS-Position
 - 🎬 **Video-Erkennung** - Findet Videos und bietet Löschung an
 - 🧹 **macOS Cleanup** - Entfernt `.DS_Store` und `._*` Dateien automatisch
 

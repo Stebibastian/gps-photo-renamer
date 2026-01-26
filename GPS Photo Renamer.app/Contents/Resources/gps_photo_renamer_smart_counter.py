@@ -232,6 +232,96 @@ class GPSPhotoRenamer:
         # Replace spaces with nothing or underscore
         name = name.replace(' ', '')
         return name
+
+    def get_map_tile(self, lat: float, lon: float, size: int = 200, zoom: int = 13) -> Optional[Image.Image]:
+        """
+        Download a map tile from OpenStreetMap centered on given coordinates.
+
+        Args:
+            lat: Latitude
+            lon: Longitude
+            size: Size of the map square in pixels (default 200x200)
+            zoom: Zoom level (default 13 - shows neighborhood/village)
+
+        Returns:
+            PIL Image of the map tile or None if failed
+        """
+        try:
+            import math
+            from io import BytesIO
+
+            # Convert lat/lon to tile numbers
+            n = 2 ** zoom
+            x_tile = int((lon + 180) / 360 * n)
+            y_tile = int((1 - math.asinh(math.tan(math.radians(lat))) / math.pi) / 2 * n)
+
+            # Calculate pixel position within tile (tiles are 256x256)
+            x_pixel = int(((lon + 180) / 360 * n - x_tile) * 256)
+            y_pixel = int(((1 - math.asinh(math.tan(math.radians(lat))) / math.pi) / 2 * n - y_tile) * 256)
+
+            # We need to fetch multiple tiles to get a centered view
+            # Calculate how many tiles we need (at least 2x2 for proper centering)
+            tiles_needed = 2
+
+            # Create a larger canvas to stitch tiles
+            canvas_size = 256 * tiles_needed
+            canvas = Image.new('RGB', (canvas_size, canvas_size))
+
+            # Fetch tiles in a grid around the center tile
+            headers = {
+                'User-Agent': 'GPSPhotoRenamer/2.1 (photo organization tool)'
+            }
+
+            for dx in range(tiles_needed):
+                for dy in range(tiles_needed):
+                    tile_x = x_tile + dx - tiles_needed // 2 + 1
+                    tile_y = y_tile + dy - tiles_needed // 2 + 1
+
+                    # OpenStreetMap tile URL
+                    url = f"https://tile.openstreetmap.org/{zoom}/{tile_x}/{tile_y}.png"
+
+                    try:
+                        response = requests.get(url, headers=headers, timeout=5)
+                        if response.status_code == 200:
+                            tile_img = Image.open(BytesIO(response.content))
+                            canvas.paste(tile_img, (dx * 256, dy * 256))
+                    except Exception:
+                        # If tile fetch fails, leave it blank
+                        pass
+
+            # Calculate crop box to center on the exact location
+            center_x = x_pixel + 256 * (tiles_needed // 2 - 1) + 128
+            center_y = y_pixel + 256 * (tiles_needed // 2 - 1) + 128
+
+            left = max(0, center_x - size // 2)
+            top = max(0, center_y - size // 2)
+            right = min(canvas_size, left + size)
+            bottom = min(canvas_size, top + size)
+
+            # Crop to desired size
+            map_img = canvas.crop((left, top, right, bottom))
+
+            # Ensure exact size
+            if map_img.size != (size, size):
+                map_img = map_img.resize((size, size), Image.Resampling.LANCZOS)
+
+            # Add a small red dot at center to mark exact location
+            from PIL import ImageDraw as MapDraw
+            draw = MapDraw.Draw(map_img)
+            dot_radius = 4
+            center = size // 2
+            draw.ellipse(
+                [center - dot_radius, center - dot_radius,
+                 center + dot_radius, center + dot_radius],
+                fill=(255, 0, 0),
+                outline=(255, 255, 255)
+            )
+
+            return map_img
+
+        except Exception as e:
+            print(f"  ⚠️  Could not fetch map tile: {e}")
+            return None
     
     def get_datetime_from_exif(self, exif: dict, file_path: Path = None) -> Optional[str]:
         """Extract datetime from EXIF and format it. Falls back to file modification date."""
@@ -259,15 +349,18 @@ class GPSPhotoRenamer:
         return None
     
     def add_watermark_to_image(self, image_path: Path, datetime_str: Optional[str],
-                               location: Optional[Dict] = None) -> bool:
+                               location: Optional[Dict] = None,
+                               gps_coords: Optional[Dict[str, float]] = None) -> bool:
         """
-        Add watermark to image with date/time on left and location on right.
+        Add watermark to image with date/time on left, location on right,
+        and optional map tile below the location text.
         Respects EXIF orientation to handle portrait/landscape correctly.
 
         Args:
             image_path: Path to image file
             datetime_str: Datetime string in format YYYYMMDDHHMMSS
             location: Dictionary with 'city' and 'country_code' keys
+            gps_coords: Dictionary with 'latitude' and 'longitude' keys for map
 
         Returns:
             True if watermark was added successfully
@@ -336,30 +429,89 @@ class GPSPhotoRenamer:
                 draw.text((x, y), left_text, font=font, fill=(255, 255, 255, 255))
             
             # RIGHT WATERMARK: City - Country (only if GPS exists)
+            right_text_height = 0
             if location and location.get('city'):
                 right_text = f"{location['city']} - {location['country_code']}"
-                
+
                 # Get text bounding box
                 bbox = draw.textbbox((0, 0), right_text, font=font)
                 text_width = bbox[2] - bbox[0]
-                text_height = bbox[3] - bbox[1]
-                
+                right_text_height = bbox[3] - bbox[1]
+
                 # Position (top right)
                 x = img.size[0] - text_width - padding * 2
                 y = padding
-                
+
                 # Background rectangle
                 draw.rectangle(
                     [x - padding//2, y - padding//2,
-                     x + text_width + padding//2, y + text_height + padding//2],
+                     x + text_width + padding//2, y + right_text_height + padding//2],
                     fill=(0, 0, 0, 180)
                 )
-                
+
                 # Text
                 draw.text((x, y), right_text, font=font, fill=(255, 255, 255, 255))
-            
-            # Composite
+
+            # Composite text overlay first
             img = Image.alpha_composite(img, overlay)
+
+            # MAP TILE: Below the location text (only if GPS coordinates exist)
+            if gps_coords and gps_coords.get('latitude') and gps_coords.get('longitude'):
+                try:
+                    # Calculate map size relative to image (about 5% of smallest dimension, min 150, max 250)
+                    map_size = max(150, min(250, int(min_dimension * 0.12)))
+
+                    # Fetch map tile
+                    map_img = self.get_map_tile(
+                        gps_coords['latitude'],
+                        gps_coords['longitude'],
+                        size=map_size,
+                        zoom=13
+                    )
+
+                    if map_img:
+                        # Convert map to RGBA
+                        map_img = map_img.convert('RGBA')
+
+                        # Apply 50% transparency to the map
+                        # Create alpha mask
+                        alpha = map_img.split()[3] if map_img.mode == 'RGBA' else Image.new('L', map_img.size, 255)
+                        alpha = alpha.point(lambda p: int(p * 0.5))  # 50% transparency
+
+                        # Make map semi-transparent
+                        map_rgba = Image.new('RGBA', map_img.size, (0, 0, 0, 0))
+                        map_rgba.paste(map_img, (0, 0))
+                        map_rgba.putalpha(alpha)
+
+                        # Add rounded corner border effect
+                        border_size = 3
+                        border_color = (255, 255, 255, 180)
+
+                        # Create border overlay on main image
+                        border_overlay = Image.new('RGBA', img.size, (0, 0, 0, 0))
+                        border_draw = ImageDraw.Draw(border_overlay)
+
+                        # Position: top right, below the location text
+                        map_x = img.size[0] - map_size - padding
+                        map_y = padding + right_text_height + padding * 2 if right_text_height > 0 else padding
+
+                        # Draw white border rectangle
+                        border_draw.rectangle(
+                            [map_x - border_size, map_y - border_size,
+                             map_x + map_size + border_size, map_y + map_size + border_size],
+                            fill=(255, 255, 255, 180)
+                        )
+
+                        # Composite border
+                        img = Image.alpha_composite(img, border_overlay)
+
+                        # Paste the semi-transparent map
+                        img.paste(map_rgba, (map_x, map_y), map_rgba)
+
+                        print(f"  🗺️  Map added ({map_size}x{map_size}px)")
+
+                except Exception as e:
+                    print(f"  ⚠️  Could not add map: {e}")
             
             # Convert back to RGB and save
             img = img.convert('RGB')
@@ -591,9 +743,9 @@ class GPSPhotoRenamer:
                     print(f"  ✓ {photo_path.name}")
                     print(f"    → {new_name}")
                     
-                    # Add watermark if requested
+                    # Add watermark if requested (with map if GPS available)
                     if add_watermark:
-                        self.add_watermark_to_image(new_path, datetime_str, location)
+                        self.add_watermark_to_image(new_path, datetime_str, location, gps_data)
                     
                     if location:
                         print(f"    📍 {location['city']}, {location['country_code']}")
