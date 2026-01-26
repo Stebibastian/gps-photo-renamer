@@ -1,60 +1,95 @@
 # 📸 GPS Photo Renamer
 
-Automatically rename photos based on GPS EXIF data and datetime - with native macOS UI.
+Automatisches Umbenennen von Fotos basierend auf GPS EXIF-Daten und Datum - mit nativer macOS Benutzeroberfläche.
 
-## Download
-
-**[⬇️ Download ZIP](https://github.com/Stebibastian/gps-photo-renamer/archive/refs/heads/main.zip)**
+[![Download](https://img.shields.io/badge/Download-Latest%20Release-blue?style=for-the-badge)](https://github.com/Stebibastian/gps-photo-renamer/releases/latest)
+[![macOS](https://img.shields.io/badge/macOS-10.14+-000000?style=flat-square&logo=apple)](https://www.apple.com/macos/)
+[![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 
 ## Features
 
-- 🖥️ **Native macOS App** - No Terminal required
-- ✨ **Smart Counter** - Automatically continues numbering from existing files
-- 🌍 **GPS Geocoding** - Converts GPS coordinates to city and country names
-- 💧 **Watermark** - Date (top-left) and location (top-right)
-- 🧹 **macOS Cleanup** - Removes `.DS_Store` and `._*` files automatically
+- 🖥️ **Native macOS App** - Kein Terminal erforderlich
+- ✨ **Smart Counter** - Nummerierung setzt automatisch fort
+- 🌍 **GPS Geocoding** - Wandelt GPS-Koordinaten in Ortsnamen um
+- 💧 **Wasserzeichen** - Datum (oben-links) und Ort (oben-rechts)
+- 🧹 **macOS Cleanup** - Entfernt `.DS_Store` und `._*` Dateien automatisch
 
-## Output Format
+## Ausgabe-Format
 
 ```
-Before: IMG_1234.JPG
-After:  20241226093045_0001_Graz_AT.jpg
+Vorher: IMG_1234.JPG
+Nachher: 20241226093045_0001_Graz_AT.jpg
 ```
 
 ## Installation
 
-1. **[Download ZIP](https://github.com/Stebibastian/gps-photo-renamer/archive/refs/heads/main.zip)** and extract
-2. Move `GPS Photo Renamer.app` to your Applications folder
-3. **Important:** Keep `gps_photo_renamer_smart_counter.py` in the same folder!
-4. Double-click to start
+### Download (Empfohlen)
 
-**First Launch:** Right-click → "Open" → "Open" (bypasses Gatekeeper)
+1. **[📥 Download GPS Photo Renamer (Latest)](https://github.com/Stebibastian/gps-photo-renamer/releases/latest)**
+2. ZIP-Datei entpacken
+3. `GPS Photo Renamer.app` in den Programme-Ordner verschieben
+4. **Wichtig:** `gps_photo_renamer_smart_counter.py` im gleichen Ordner lassen!
+5. Doppelklick zum Starten
 
-## Usage
+**Erster Start - Sicherheitswarnung:**
 
-1. **Select Folder** - Choose folder with photos
-2. **Choose Mode** - Log preview or direct rename
-3. **Confirm** - Review and start
-4. **Done** - Open folder or rename after preview
+macOS blockiert die App beim ersten Mal:
+- Öffne **Systemeinstellungen** → **Datenschutz & Sicherheit**
+- Scrolle zu: *"GPS Photo Renamer.app wurde blockiert"*
+- Klicke **"Dennoch öffnen"** → **"Öffnen"** bestätigen
 
-## Requirements
+✅ Danach startet die App normal!
+
+### Mit Git
+
+```bash
+git clone https://github.com/Stebibastian/gps-photo-renamer.git
+cd gps-photo-renamer
+open "GPS Photo Renamer.app"
+```
+
+## Verwendung
+
+1. **Ordner wählen** - Ordner mit Fotos auswählen
+2. **Modus wählen** - Log-Vorschau oder direkt umbenennen
+3. **Bestätigen** - Prüfen und starten
+4. **Fertig** - Ordner öffnen oder nach Vorschau umbenennen
+
+## Voraussetzungen
 
 - macOS 10.14+
-- Python 3 (pre-installed on macOS)
-- Internet connection (for GPS location lookup)
+- Python 3 (auf macOS vorinstalliert)
+- Internetverbindung (für GPS-Ortsabfrage)
 
-Dependencies are installed automatically on first run.
+Dependencies werden beim ersten Start automatisch installiert.
 
-## Supported Formats
+## Unterstützte Formate
 
 - JPG / JPEG
 - PNG
 - HEIC / HEIF
 
-## License
+## Problemlösung
 
-MIT License - See [LICENSE](LICENSE) file
+### ⚠️ "App wurde blockiert"
+
+**Lösung:** Systemeinstellungen → Datenschutz & Sicherheit → "Dennoch öffnen"
+
+### ❌ Dependencies fehlen
+
+Falls die automatische Installation fehlschlägt:
+```bash
+pip3 install Pillow requests --break-system-packages
+```
+
+### 📄 Log-Datei
+
+Bei Problemen prüfe: `~/Desktop/gps_photo_renamer.log`
+
+## Lizenz
+
+MIT License - siehe [LICENSE](LICENSE) Datei
 
 ---
 
-Created with ❤️ for organizing photo collections
+Made with ❤️ for organizing photo collections
